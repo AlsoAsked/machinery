@@ -191,7 +191,7 @@ func (worker *Worker) Process(signature *tasks.Signature) error {
 		// Otherwise, execute default retry logic based on signature.RetryCount
 		// or signature.RetryForever, and signature.RetryTimeout values
 		if signature.RetryCount > 0 || signature.RetryForever {
-			return worker.taskRetry(signature)
+			return worker.taskRetry(signature, err)
 		}
 
 		return worker.taskFailed(signature, err)
@@ -201,10 +201,14 @@ func (worker *Worker) Process(signature *tasks.Signature) error {
 }
 
 // retryTask decrements RetryCount counter and republishes the task to the queue
-func (worker *Worker) taskRetry(signature *tasks.Signature) error {
+func (worker *Worker) taskRetry(signature *tasks.Signature, taskErr error) error {
 	// Update task state to RETRY
 	if err := worker.server.GetBackend().SetStateRetry(signature); err != nil {
 		return fmt.Errorf("Set state to 'retry' for task %s returned error: %s", signature.UUID, err)
+	}
+
+	if worker.errorHandler != nil {
+		worker.errorHandler(taskErr)
 	}
 
 	if !signature.RetryForever {
