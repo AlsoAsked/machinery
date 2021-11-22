@@ -2,8 +2,9 @@ package tasks
 
 import (
 	"fmt"
-	"github.com/RichardKnop/machinery/v1/utils"
 	"time"
+
+	"github.com/RichardKnop/machinery/v1/utils"
 
 	"github.com/google/uuid"
 )
@@ -44,21 +45,23 @@ func (h Headers) ForeachKey(handler func(key, val string) error) error {
 
 // Signature represents a single task invocation
 type Signature struct {
-	UUID           string
-	Name           string
-	RoutingKey     string
-	ETA            *time.Time
-	GroupUUID      string
-	GroupTaskCount int
-	Args           []Arg
-	Headers        Headers
-	Priority       uint8
-	Immutable      bool
-	RetryCount     int
-	RetryTimeout   int
-	OnSuccess      []*Signature
-	OnError        []*Signature
-	ChordCallback  *Signature
+	UUID               string
+	Name               string
+	RoutingKey         string
+	ETA                *time.Time
+	GroupUUID          string
+	GroupTaskCount     int
+	Args               []Arg
+	Headers            Headers
+	Priority           uint8
+	Immutable          bool
+	RetryCount         int
+	RetryForever       bool
+	RetryTimeout       int
+	RetryTimeoutStatic bool
+	OnSuccess          []*Signature
+	OnError            []*Signature
+	ChordCallback      *Signature
 	//MessageGroupId for Broker, e.g. SQS
 	BrokerMessageGroupId string
 	//ReceiptHandle of SQS Message
