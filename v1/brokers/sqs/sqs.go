@@ -206,7 +206,7 @@ func (b *Broker) consumeOne(delivery *awssqs.ReceiveMessageOutput, taskProcessor
 	if err := decoder.Decode(sig); err != nil {
 		log.ERROR.Printf("unmarshal error. the delivery is %v", delivery)
 		// if the unmarshal fails, remove the delivery from the queue
-		if delErr := b.deleteOne(delivery); delErr != nil {
+		if delErr := b.deleteOne(delivery, taskProcessor); delErr != nil {
 			log.ERROR.Printf("error when deleting the delivery. delivery is %v, Error=%s", delivery, delErr)
 		}
 		return err
@@ -219,7 +219,10 @@ func (b *Broker) consumeOne(delivery *awssqs.ReceiveMessageOutput, taskProcessor
 	// and leave the message in the queue
 	if !b.IsTaskRegistered(sig.Name) {
 		if sig.IgnoreWhenTaskNotRegistered {
-			b.deleteOne(delivery)
+			if delErr := b.deleteOne(delivery, taskProcessor); delErr != nil {
+				log.ERROR.Printf("error when deleting the delivery. delivery is %v, Error=%s", delivery, delErr)
+				return delErr
+			}
 		}
 		return fmt.Errorf("task %s is not registered", sig.Name)
 	}
@@ -233,15 +236,15 @@ func (b *Broker) consumeOne(delivery *awssqs.ReceiveMessageOutput, taskProcessor
 		return err
 	}
 	// Delete message after successfully consuming and processing the message
-	if err = b.deleteOne(delivery); err != nil {
+	if err = b.deleteOne(delivery, taskProcessor); err != nil {
 		log.ERROR.Printf("error when deleting the delivery. delivery is %v, Error=%s", delivery, err)
 	}
 	return err
 }
 
 // deleteOne is a method delete a delivery from AWS SQS
-func (b *Broker) deleteOne(delivery *awssqs.ReceiveMessageOutput) error {
-	qURL := b.defaultQueueURL()
+func (b *Broker) deleteOne(delivery *awssqs.ReceiveMessageOutput, taskProcessor iface.TaskProcessor) error {
+	qURL := b.getQueueURL(taskProcessor)
 	_, err := b.service.DeleteMessage(&awssqs.DeleteMessageInput{
 		QueueUrl:      qURL,
 		ReceiptHandle: delivery.Messages[0].ReceiptHandle,
@@ -251,16 +254,6 @@ func (b *Broker) deleteOne(delivery *awssqs.ReceiveMessageOutput) error {
 		return err
 	}
 	return nil
-}
-
-// defaultQueueURL is a method returns the default queue url
-func (b *Broker) defaultQueueURL() *string {
-	if b.queueUrl != nil {
-		return b.queueUrl
-	} else {
-		return aws.String(b.GetConfig().Broker + "/" + b.GetConfig().DefaultQueue)
-	}
-
 }
 
 // receiveMessage is a method receives a message from specified queue url
@@ -356,7 +349,7 @@ func (b *Broker) stopReceiving() {
 	b.stopReceivingChan <- 1
 }
 
-// getQueueURL is a method returns that returns queueURL first by checking if custom queue was set and usign it
+// getQueueURL is a method returns that returns queueURL first by checking if custom queue was set and using it
 // otherwise using default queueName from config
 func (b *Broker) getQueueURL(taskProcessor iface.TaskProcessor) *string {
 	queueName := b.GetConfig().DefaultQueue
