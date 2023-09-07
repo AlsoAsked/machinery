@@ -1,32 +1,34 @@
-package sqs
+package sqsv2
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"sync"
-
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sqs/sqsiface"
 
 	"github.com/RichardKnop/machinery/v1/brokers/iface"
 	"github.com/RichardKnop/machinery/v1/common"
 	"github.com/RichardKnop/machinery/v1/config"
 
-	awssqs "github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
 var (
+	TestAWSSQSBroker     *Broker
+	ErrAWSSQSBroker      *Broker
 	ReceiveMessageOutput *awssqs.ReceiveMessageOutput
+	TestConf             *config.Config
 )
 
 type FakeSQS struct {
-	sqsiface.SQSAPI
+	SQSAPIV2
 }
 
-func (f *FakeSQS) SendMessage(*awssqs.SendMessageInput) (*awssqs.SendMessageOutput, error) {
+func (f *FakeSQS) SendMessage(_ context.Context, _ *awssqs.SendMessageInput, _ ...func(*awssqs.Options)) (*awssqs.SendMessageOutput, error) {
 	output := awssqs.SendMessageOutput{
 		MD5OfMessageAttributes: aws.String("d25a6aea97eb8f585bfa92d314504a92"),
 		MD5OfMessageBody:       aws.String("bbdc5fdb8be7251f5c910905db994bab"),
@@ -35,46 +37,74 @@ func (f *FakeSQS) SendMessage(*awssqs.SendMessageInput) (*awssqs.SendMessageOutp
 	return &output, nil
 }
 
-func (f *FakeSQS) ReceiveMessage(*awssqs.ReceiveMessageInput) (*awssqs.ReceiveMessageOutput, error) {
+func (f *FakeSQS) ReceiveMessage(_ context.Context, _ *awssqs.ReceiveMessageInput, _ ...func(*awssqs.Options)) (*awssqs.ReceiveMessageOutput, error) {
 	return ReceiveMessageOutput, nil
 }
 
-func (f *FakeSQS) DeleteMessage(*awssqs.DeleteMessageInput) (*awssqs.DeleteMessageOutput, error) {
+func (f *FakeSQS) DeleteMessage(_ context.Context, _ *awssqs.DeleteMessageInput, _ ...func(*awssqs.Options)) (*awssqs.DeleteMessageOutput, error) {
 	return &awssqs.DeleteMessageOutput{}, nil
 }
 
 type ErrorSQS struct {
-	sqsiface.SQSAPI
+	SQSAPIV2
 }
 
-func (e *ErrorSQS) SendMessage(*awssqs.SendMessageInput) (*awssqs.SendMessageOutput, error) {
+func (f *ErrorSQS) SendMessage(_ context.Context, _ *awssqs.SendMessageInput, _ ...func(*awssqs.Options)) (*awssqs.SendMessageOutput, error) {
 	err := errors.New("this is an error")
 	return nil, err
 }
 
-func (e *ErrorSQS) ReceiveMessage(*awssqs.ReceiveMessageInput) (*awssqs.ReceiveMessageOutput, error) {
+func (f *ErrorSQS) ReceiveMessage(_ context.Context, _ *awssqs.ReceiveMessageInput, _ ...func(*awssqs.Options)) (*awssqs.ReceiveMessageOutput, error) {
 	err := errors.New("this is an error")
 	return nil, err
 }
 
-func (e *ErrorSQS) DeleteMessage(*awssqs.DeleteMessageInput) (*awssqs.DeleteMessageOutput, error) {
+func (f *ErrorSQS) DeleteMessage(_ context.Context, _ *awssqs.DeleteMessageInput, _ ...func(*awssqs.Options)) (*awssqs.DeleteMessageOutput, error) {
 	err := errors.New("this is an error")
 	return nil, err
 }
 
 func init() {
+	redisURL := os.Getenv("REDIS_URL")
+	brokerURL := "https://sqs.foo.amazonaws.com.cn"
+	TestConf = &config.Config{
+		Broker:        brokerURL,
+		DefaultQueue:  "test_queue",
+		ResultBackend: redisURL,
+	}
+	cfg, _ := awscfg.LoadDefaultConfig(context.TODO())
+	svc := new(FakeSQS)
+	TestAWSSQSBroker = &Broker{
+		Broker:            common.NewBroker(TestConf),
+		config:            cfg,
+		service:           svc,
+		processingWG:      sync.WaitGroup{},
+		receivingWG:       sync.WaitGroup{},
+		stopReceivingChan: make(chan int),
+	}
+
+	errSvc := new(ErrorSQS)
+	ErrAWSSQSBroker = &Broker{
+		Broker:            common.NewBroker(TestConf),
+		config:            cfg,
+		service:           errSvc,
+		processingWG:      sync.WaitGroup{},
+		receivingWG:       sync.WaitGroup{},
+		stopReceivingChan: make(chan int),
+	}
+
 	// TODO: chang message body to signature example
 	messageBody, _ := json.Marshal(map[string]int{"apple": 5, "lettuce": 7})
 	ReceiveMessageOutput = &awssqs.ReceiveMessageOutput{
-		Messages: []*awssqs.Message{
+		Messages: []types.Message{
 			{
-				Attributes: map[string]*string{
-					"SentTimestamp": aws.String("1512962021537"),
+				Attributes: map[string]string{
+					"SentTimestamp": "1512962021537",
 				},
 				Body:                   aws.String(string(messageBody)),
 				MD5OfBody:              aws.String("bbdc5fdb8be7251f5c910905db994bab"),
 				MD5OfMessageAttributes: aws.String("d25a6aea97eb8f585bfa92d314504a92"),
-				MessageAttributes: map[string]*awssqs.MessageAttributeValue{
+				MessageAttributes: map[string]types.MessageAttributeValue{
 					"Title": {
 						DataType:    aws.String("String"),
 						StringValue: aws.String("The Whistler"),

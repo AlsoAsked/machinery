@@ -7,9 +7,12 @@ import (
 	"time"
 
 	"cloud.google.com/go/pubsub"
+	"go.mongodb.org/mongo-driver/mongo"
+
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	"go.mongodb.org/mongo-driver/mongo"
+
+	sqsv2 "github.com/aws/aws-sdk-go-v2/service/sqs"
 )
 
 const (
@@ -96,7 +99,14 @@ type DynamoDBConfig struct {
 
 // SQSConfig wraps SQS related configuration
 type SQSConfig struct {
-	Client          *sqs.SQS
+	Client *sqs.SQS
+	// aws-sdk-go-v2 is incompatible with aws-sdk-go
+	// obtaining credentials fails when running aws-sdk-go IMDSv2 enabled instances
+	// There is no common interface between v1 and v2 SQS client, v2 requires following
+	//	- requires context as additional parameter on all calls,
+	//	- various parameters of type []*string are changed to []string, similarly map[string]string
+	//	- unlike v1 client which confirms to sqsiface.SQSAPI, v2 client doesn't confirm to a single interface
+	ClientV2        *sqsv2.Client
 	WaitTimeSeconds int `yaml:"receive_wait_time_seconds" envconfig:"SQS_WAIT_TIME_SECONDS"`
 	// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html
 	// visibility timeout should default to nil to use the overall visibility timeout for the queue
@@ -137,6 +147,31 @@ type RedisConfig struct {
 	// no DialNetDial option is specified.
 	// Default: 15
 	ConnectTimeout int `yaml:"connect_timeout" envconfig:"REDIS_CONNECT_TIMEOUT"`
+
+	// Minimum number of idle connections which is useful when establishing
+	// new connection is slow.
+	// Used in redis-dlq broker
+	MinIdleConns int `yaml:"min_idle_conns" envconfig:"REDIS_MIN_IDLE_CONNS"`
+
+	// Minimum backoff between each retry.
+	// Used in redis-dlq broker
+	// Default: 8 * time.Millisecond
+	MinRetryBackoff int `yaml:"min_retry_backoff" envconfig:"REDIS_MIN_RETRY_BACKOFF"`
+
+	// Maximum backoff between each retry.
+	// Used in redis-dlq broker
+	// Default: 512 * time.Millisecond
+	MaxRetryBackoff int `yaml:"max_retry_backoff" envconfig:"REDIS_MAX_RETRY_BACKOFF"`
+
+	// Default: 0 (no retries)
+	MaxRetries int `yaml:"max_retries" envconfig:"REDIS_MAX_RETRIES"`
+
+	// Default: 0 (pool size defaults to 10 * NumCpus)
+	PoolSize int `yaml:"pool_size" envconfig:"REDIS_POOL_SIZE"`
+
+	// VisibilityTimeout used in redis-dlq broker
+	// default to nil to use the overall visibility timeout for redis messages
+	VisibilityTimeout *int64 `yaml:"visibility_timeout" envconfig:"REDIS_VISIBILITY_TIMEOUT"`
 
 	// NormalTasksPollPeriod specifies the period in milliseconds when polling redis for normal tasks
 	// Default: 1000

@@ -22,14 +22,14 @@ import (
 
 // Worker represents a single worker process
 type Worker struct {
-	server            *Server
-	ConsumerTag       string
-	Concurrency       int
-	Queue             string
-	errorHandler      func(err error)
-	preTaskHandler    func(*tasks.Signature)
-	postTaskHandler   func(*tasks.Signature)
-	preConsumeHandler func(*Worker) bool
+	server          *Server
+	ConsumerTag     string
+	Concurrency     int
+	Queue           string
+	errorHandler    func(err error)
+	preTaskHandler  func(*tasks.Signature)
+	postTaskHandler func(*tasks.Signature)
+	getQueueHandler func() string
 }
 
 var (
@@ -121,6 +121,11 @@ func (worker *Worker) LaunchAsync(errorsChan chan<- error) {
 
 // CustomQueue returns Custom Queue of the running worker process
 func (worker *Worker) CustomQueue() string {
+	// if the handler is defined, use that to fetch the queue name
+	if worker.getQueueHandler != nil {
+		return worker.getQueueHandler()
+	}
+
 	return worker.Queue
 }
 
@@ -408,27 +413,26 @@ func (worker *Worker) SetErrorHandler(handler func(err error)) {
 	worker.errorHandler = handler
 }
 
-//SetPreTaskHandler sets a custom handler func before a job is started
+// SetPreTaskHandler sets a custom handler func before a job is started
 func (worker *Worker) SetPreTaskHandler(handler func(*tasks.Signature)) {
 	worker.preTaskHandler = handler
 }
 
-//SetPostTaskHandler sets a custom handler for the end of a job
+// SetPostTaskHandler sets a custom handler for the end of a job
 func (worker *Worker) SetPostTaskHandler(handler func(*tasks.Signature)) {
 	worker.postTaskHandler = handler
 }
 
-//SetPreConsumeHandler sets a custom handler for the end of a job
-func (worker *Worker) SetPreConsumeHandler(handler func(*Worker) bool) {
-	worker.preConsumeHandler = handler
+// SetGetQueueHandler sets a get queue handler to fetch queue name from
+func (worker *Worker) SetGetQueueHandler(handler func() string) {
+	worker.getQueueHandler = handler
 }
 
-//GetServer returns server
+// GetServer returns server
 func (worker *Worker) GetServer() *Server {
 	return worker.server
 }
 
-//
 func (worker *Worker) PreConsumeHandler() bool {
 	if worker.preConsumeHandler == nil {
 		return true

@@ -72,6 +72,9 @@ type Signature struct {
 	// IgnoreWhenTaskNotRegistered auto removes the request when there is no handeler available
 	// When this is true a task with no handler will be ignored and not placed back in the queue
 	IgnoreWhenTaskNotRegistered bool
+	// A map of the attributes requested in ReceiveMessage, and their respective values. e.g. ApproximateReceiveCount
+	// for SQS, check https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_Message.html#API_Message_Contents
+	Attributes map[string]*string
 }
 
 // NewSignature creates a new task signature

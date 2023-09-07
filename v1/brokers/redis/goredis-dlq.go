@@ -3,16 +3,13 @@ package redis
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/go-redis/redis/v8"
-	"github.com/go-redsync/redsync/v4"
 
 	"github.com/RichardKnop/machinery/v1/brokers/errs"
 	"github.com/RichardKnop/machinery/v1/brokers/iface"
@@ -20,71 +17,78 @@ import (
 	"github.com/RichardKnop/machinery/v1/config"
 	"github.com/RichardKnop/machinery/v1/log"
 	"github.com/RichardKnop/machinery/v1/tasks"
+	"github.com/RichardKnop/redsync"
+	"github.com/btcsuite/btcutil/base58"
+	"github.com/go-redis/redis"
+	"github.com/spf13/cast"
 )
 
-// BrokerGR represents a Redis broker
-type BrokerGR struct {
+const (
+	messageVisibilitySet = "message-visibility-set"
+	hSetMessageKey       = "message"
+	hSetQueueKey         = "queue"
+	hSetRetryKey         = "visibility_counter"
+	taskPrefix           = "task_%s"
+)
+
+// BrokerGR_DLQ represents a Redis broker using go-redis, with enhancements for DLQ support
+type BrokerGR_DLQ struct {
 	common.Broker
 	rclient      redis.UniversalClient
 	consumingWG  sync.WaitGroup // wait group to make sure whole consumption completes
 	processingWG sync.WaitGroup // use wait group to make sure task processing completes
 	delayedWG    sync.WaitGroup
 	// If set, path to a socket file overrides hostname
-	socketPath           string
-	redsync              *redsync.Redsync
-	redisOnce            sync.Once
-	redisDelayedTasksKey string
+	socketPath string
+	redsync    *redsync.Redsync
+	redisOnce  sync.Once
 }
 
-// NewGR creates new Broker instance
-func NewGR(cnf *config.Config, addrs []string, db int) iface.Broker {
-	b := &BrokerGR{Broker: common.NewBroker(cnf)}
-
-	var password string
-	parts := strings.Split(addrs[0], "@")
-	if len(parts) >= 2 {
-		// with password
-		password = strings.Join(parts[:len(parts)-1], "@")
-		addrs[0] = parts[len(parts)-1] // addr is the last one without @
-	}
+// NewGR_DLQ creates new Broker instance
+func NewGR_DLQ(cnf *config.Config, addrs []string, password string, db int) iface.Broker {
+	b := &BrokerGR_DLQ{Broker: common.NewBroker(cnf)}
 
 	ropt := &redis.UniversalOptions{
-		Addrs:    addrs,
-		DB:       db,
-		Password: password,
-		TLSConfig: cnf.TLSConfig,
+		Addrs:           addrs,
+		DB:              db,
+		Password:        password,
+		ReadTimeout:     time.Duration(cnf.Redis.ReadTimeout) * time.Second,
+		WriteTimeout:    time.Duration(cnf.Redis.WriteTimeout) * time.Second,
+		DialTimeout:     time.Duration(cnf.Redis.ConnectTimeout) * time.Second,
+		IdleTimeout:     time.Duration(cnf.Redis.IdleTimeout) * time.Second,
+		MinIdleConns:    cnf.Redis.MinIdleConns,
+		MinRetryBackoff: time.Duration(cnf.Redis.MinRetryBackoff) * time.Millisecond,
+		MaxRetryBackoff: time.Duration(cnf.Redis.MaxRetryBackoff) * time.Millisecond,
+		MaxRetries:      cnf.Redis.MaxRetries,
+		PoolSize:        cnf.Redis.PoolSize,
+		TLSConfig:       cnf.TLSConfig,
 	}
 	if cnf.Redis != nil {
+		// if we're specifying MasterName here, then we'll always connect to db 0, since provided db is ignored in cluster mode
 		ropt.MasterName = cnf.Redis.MasterName
 	}
 
-	if cnf.Redis != nil && cnf.Redis.ClusterMode {
-		b.rclient = redis.NewClusterClient(ropt.Cluster())
-	} else {
-		b.rclient = redis.NewUniversalClient(ropt)
-	}
+	b.rclient = redis.NewUniversalClient(ropt)
 
 	if cnf.Redis.DelayedTasksKey != "" {
-		b.redisDelayedTasksKey = cnf.Redis.DelayedTasksKey
-	} else {
-		b.redisDelayedTasksKey = defaultRedisDelayedTasksKey
+		redisDelayedTasksKey = cnf.Redis.DelayedTasksKey
 	}
 	return b
 }
 
 // StartConsuming enters a loop and waits for incoming messages
-func (b *BrokerGR) StartConsuming(consumerTag string, concurrency int, taskProcessor iface.TaskProcessor) (bool, error) {
+func (b *BrokerGR_DLQ) StartConsuming(consumerTag string, concurrency int, taskProcessor iface.TaskProcessor) (bool, error) {
 	b.consumingWG.Add(1)
 	defer b.consumingWG.Done()
 
 	if concurrency < 1 {
-		concurrency = runtime.NumCPU() * 2
+		concurrency = 1
 	}
 
 	b.Broker.StartConsuming(consumerTag, concurrency, taskProcessor)
 
 	// Ping the server to make sure connection is live
-	_, err := b.rclient.Ping(context.Background()).Result()
+	_, err := b.rclient.Ping().Result()
 	if err != nil {
 		b.GetRetryFunc()(b.GetRetryStopChan())
 
@@ -125,9 +129,9 @@ func (b *BrokerGR) StartConsuming(consumerTag string, concurrency int, taskProce
 				//TODO: should this error be ignored?
 				if len(task) > 0 {
 					deliveries <- task
+				} else {
+					pool <- struct{}{}
 				}
-
-				pool <- struct{}{}
 			}
 		}
 	}()
@@ -144,7 +148,7 @@ func (b *BrokerGR) StartConsuming(consumerTag string, concurrency int, taskProce
 			case <-b.GetStopChan():
 				return
 			default:
-				task, err := b.nextDelayedTask(b.redisDelayedTasksKey)
+				task, err := b.nextDelayedTask(redisDelayedTasksKey)
 				if err != nil {
 					continue
 				}
@@ -153,7 +157,7 @@ func (b *BrokerGR) StartConsuming(consumerTag string, concurrency int, taskProce
 				decoder := json.NewDecoder(bytes.NewReader(task))
 				decoder.UseNumber()
 				if err := decoder.Decode(signature); err != nil {
-					log.ERROR.Print(errs.NewErrCouldNotUnmarshalTaskSignature(task, err))
+					log.ERROR.Print(errs.NewErrCouldNotUnmarshaTaskSignature(task, err))
 				}
 
 				if err := b.Publish(context.Background(), signature); err != nil {
@@ -163,7 +167,7 @@ func (b *BrokerGR) StartConsuming(consumerTag string, concurrency int, taskProce
 		}
 	}()
 
-	if err := b.consume(deliveries, concurrency, taskProcessor); err != nil {
+	if err := b.consume(deliveries, concurrency, taskProcessor, pool); err != nil {
 		return b.GetRetry(), err
 	}
 
@@ -174,7 +178,7 @@ func (b *BrokerGR) StartConsuming(consumerTag string, concurrency int, taskProce
 }
 
 // StopConsuming quits the loop
-func (b *BrokerGR) StopConsuming() {
+func (b *BrokerGR_DLQ) StopConsuming() {
 	b.Broker.StopConsuming()
 	// Waiting for the delayed tasks goroutine to have stopped
 	b.delayedWG.Wait()
@@ -185,7 +189,7 @@ func (b *BrokerGR) StopConsuming() {
 }
 
 // Publish places a new message on the default queue
-func (b *BrokerGR) Publish(ctx context.Context, signature *tasks.Signature) error {
+func (b *BrokerGR_DLQ) Publish(ctx context.Context, signature *tasks.Signature) error {
 	// Adjust routing key (this decides which queue the message will be published to)
 	b.Broker.AdjustRoutingKey(signature)
 
@@ -201,22 +205,22 @@ func (b *BrokerGR) Publish(ctx context.Context, signature *tasks.Signature) erro
 
 		if signature.ETA.After(now) {
 			score := signature.ETA.UnixNano()
-			err = b.rclient.ZAdd(context.Background(), b.redisDelayedTasksKey, &redis.Z{Score: float64(score), Member: msg}).Err()
+			err = b.rclient.ZAdd(redisDelayedTasksKey, redis.Z{Score: float64(score), Member: msg}).Err()
 			return err
 		}
 	}
 
-	err = b.rclient.RPush(context.Background(), signature.RoutingKey, msg).Err()
+	err = b.rclient.RPush(signature.RoutingKey, msg).Err()
 	return err
 }
 
 // GetPendingTasks returns a slice of task signatures waiting in the queue
-func (b *BrokerGR) GetPendingTasks(queue string) ([]*tasks.Signature, error) {
+func (b *BrokerGR_DLQ) GetPendingTasks(queue string) ([]*tasks.Signature, error) {
 
 	if queue == "" {
 		queue = b.GetConfig().DefaultQueue
 	}
-	results, err := b.rclient.LRange(context.Background(), queue, 0, -1).Result()
+	results, err := b.rclient.LRange(queue, 0, -1).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -235,8 +239,8 @@ func (b *BrokerGR) GetPendingTasks(queue string) ([]*tasks.Signature, error) {
 }
 
 // GetDelayedTasks returns a slice of task signatures that are scheduled, but not yet in the queue
-func (b *BrokerGR) GetDelayedTasks() ([]*tasks.Signature, error) {
-	results, err := b.rclient.ZRange(context.Background(), b.redisDelayedTasksKey, 0, -1).Result()
+func (b *BrokerGR_DLQ) GetDelayedTasks() ([]*tasks.Signature, error) {
+	results, err := b.rclient.ZRange(redisDelayedTasksKey, 0, -1).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -256,16 +260,8 @@ func (b *BrokerGR) GetDelayedTasks() ([]*tasks.Signature, error) {
 
 // consume takes delivered messages from the channel and manages a worker pool
 // to process tasks concurrently
-func (b *BrokerGR) consume(deliveries <-chan []byte, concurrency int, taskProcessor iface.TaskProcessor) error {
-	errorsChan := make(chan error, concurrency*2)
-	pool := make(chan struct{}, concurrency)
-
-	// init pool for Worker tasks execution, as many slots as Worker concurrency param
-	go func() {
-		for i := 0; i < concurrency; i++ {
-			pool <- struct{}{}
-		}
-	}()
+func (b *BrokerGR_DLQ) consume(deliveries <-chan []byte, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}) error {
+	errorsChan := make(chan error)
 
 	for {
 		select {
@@ -274,10 +270,6 @@ func (b *BrokerGR) consume(deliveries <-chan []byte, concurrency int, taskProces
 		case d, open := <-deliveries:
 			if !open {
 				return nil
-			}
-			if concurrency > 0 {
-				// get execution slot from pool (blocks until one is available)
-				<-pool
 			}
 
 			b.processingWG.Add(1)
@@ -301,33 +293,64 @@ func (b *BrokerGR) consume(deliveries <-chan []byte, concurrency int, taskProces
 }
 
 // consumeOne processes a single message using TaskProcessor
-func (b *BrokerGR) consumeOne(delivery []byte, taskProcessor iface.TaskProcessor) error {
+func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProcessor) error {
 	signature := new(tasks.Signature)
 	decoder := json.NewDecoder(bytes.NewReader(delivery))
 	decoder.UseNumber()
 	if err := decoder.Decode(signature); err != nil {
-		return errs.NewErrCouldNotUnmarshalTaskSignature(delivery, err)
+		return errs.NewErrCouldNotUnmarshaTaskSignature(delivery, err)
 	}
+	// propagating hash UUID for possible application usage, for example, refreshing visibility
+	oldUuid := signature.UUID
+	gHashByte := sha256.Sum256(delivery)
+	gHash := fmt.Sprintf(taskPrefix, base58.Encode(gHashByte[:sha256.Size]))
+	signature.UUID = gHash
 
 	// If the task is not registered, we requeue it,
 	// there might be different workers for processing specific tasks
 	if !b.IsTaskRegistered(signature.Name) {
-		if signature.IgnoreWhenTaskNotRegistered {
-			return nil
-		}
-		log.INFO.Printf("Task not registered with this worker. Requeuing message: %s", delivery)
+		log.INFO.Printf("Task not registered with this worker. Requeing message: %+v", signature)
 
-		b.rclient.RPush(context.Background(), getQueueGR(b.GetConfig(), taskProcessor), delivery)
+		b.rclient.RPush(getQueueGR(b.GetConfig(), taskProcessor), delivery)
 		return nil
 	}
 
-	log.DEBUG.Printf("Received new message: %s", delivery)
+	stringCmd := b.rclient.HGet(gHash, hSetRetryKey)
+	if err := stringCmd.Err(); err != nil {
+		log.ERROR.Printf("Could not retrieve message keys from redis. Error: %s", err.Error())
+	}
+	val := stringCmd.Val()
 
-	return taskProcessor.Process(signature)
+	receiveCount := cast.ToInt(val)
+	//increment before adding to signature since ApproximateReceiveCount is the number of times a message is received, whereas the value stored in hset represents the number of retries which is one less than ApproximateReceiveCount
+	receiveCount++
+
+	receiveCountString := cast.ToString(receiveCount)
+
+	signature.Attributes = map[string]*string{}
+	signature.Attributes["ApproximateReceiveCount"] = &receiveCountString
+
+	log.DEBUG.Printf("Received new message: %+v", signature)
+	log.INFO.Printf("Processing task. Old UUID: %s New UUID: %s", oldUuid, signature.UUID)
+
+	if err := taskProcessor.Process(signature); err != nil {
+		// stop task deletion in case we want to send messages to dlq in redis
+		if err == errs.ErrStopTaskDeletion {
+			return nil
+		}
+		return err
+	}
+
+	if err := b.deleteOne(signature); err != nil {
+		log.ERROR.Printf("error when deleting the delivery. Error=%s", err)
+		return err
+	}
+
+	return nil
 }
 
 // nextTask pops next available task from the default queue
-func (b *BrokerGR) nextTask(queue string) (result []byte, err error) {
+func (b *BrokerGR_DLQ) nextTask(queue string) (result []byte, err error) {
 
 	pollPeriodMilliseconds := 1000 // default poll period for normal tasks
 	if b.GetConfig().Redis != nil {
@@ -337,25 +360,63 @@ func (b *BrokerGR) nextTask(queue string) (result []byte, err error) {
 		}
 	}
 	pollPeriod := time.Duration(pollPeriodMilliseconds) * time.Millisecond
+	visibilityTimeout := *b.GetConfig().Redis.VisibilityTimeout
+	if visibilityTimeout <= 0 {
+		visibilityTimeout = 60
+	}
+	watchFunc := func(tx *redis.Tx) error {
+		items, err := tx.LRange(queue, 0, 0).Result()
+		if err != nil {
+			return err
+		}
+		// items[0] - the name of the key where an element was popped
+		// items[1] - the value of the popped element
+		if len(items) != 1 {
+			return redis.Nil
+		}
+		gHashByte := sha256.Sum256([]byte(items[0]))
+		gHash := fmt.Sprintf(taskPrefix, base58.Encode(gHashByte[:sha256.Size]))
 
-	items, err := b.rclient.BLPop(context.Background(), pollPeriod, queue).Result()
+		fields := map[string]interface{}{
+			hSetMessageKey: items[0],
+			hSetQueueKey:   queue,
+		}
+		z := redis.Z{Score: float64(time.Now().Add(time.Duration(visibilityTimeout) * time.Second).Unix()), Member: gHash}
+		_, err = tx.TxPipelined(func(pipe redis.Pipeliner) error {
+			if err := pipe.HMSet(gHash, fields).Err(); err != nil {
+				return err
+			}
+			if err := pipe.ZAdd(messageVisibilitySet, z).Err(); err != nil {
+				return err
+			}
+			if err := pipe.LRem(queue, 1, items[0]).Err(); err != nil {
+				return err
+			}
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+		result = []byte(items[0])
+		return nil
+	}
+
+	err = b.rclient.Watch(watchFunc, queue)
 	if err != nil {
-		return []byte{}, err
-	}
+		if err == redis.Nil {
+			// if no keys found then need to delay to stop constant bombarding
+			time.Sleep(pollPeriod)
+		}
 
-	// items[0] - the name of the key where an element was popped
-	// items[1] - the value of the popped element
-	if len(items) != 2 {
-		return []byte{}, redis.Nil
+		return nil, err
 	}
-
-	result = []byte(items[1])
 
 	return result, nil
 }
 
 // nextDelayedTask pops a value from the ZSET key using WATCH/MULTI/EXEC commands.
-func (b *BrokerGR) nextDelayedTask(key string) (result []byte, err error) {
+func (b *BrokerGR_DLQ) nextDelayedTask(key string) (result []byte, err error) {
 
 	//pipe := b.rclient.Pipeline()
 	//
@@ -367,9 +428,7 @@ func (b *BrokerGR) nextDelayedTask(key string) (result []byte, err error) {
 	//	}
 	//}()
 
-	var (
-		items []string
-	)
+	var items []string
 
 	pollPeriod := 500 // default poll period for delayed tasks
 	if b.GetConfig().Redis != nil {
@@ -390,8 +449,7 @@ func (b *BrokerGR) nextDelayedTask(key string) (result []byte, err error) {
 			now := time.Now().UTC().UnixNano()
 
 			// https://redis.io/commands/zrangebyscore
-			ctx := context.Background()
-			items, err = tx.ZRevRangeByScore(ctx, key, &redis.ZRangeBy{
+			items, err = tx.ZRevRangeByScore(key, redis.ZRangeBy{
 				Min: "0", Max: strconv.FormatInt(now, 10), Offset: 0, Count: 1,
 			}).Result()
 			if err != nil {
@@ -400,32 +458,34 @@ func (b *BrokerGR) nextDelayedTask(key string) (result []byte, err error) {
 			if len(items) != 1 {
 				return redis.Nil
 			}
-
-			// only return the first zrange value if there are no other changes in this key
-			// to make sure a delayed task would only be consumed once
-			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-				pipe.ZRem(ctx, key, items[0])
-				result = []byte(items[0])
-				return nil
+			_, err = tx.TxPipelined(func(pipe redis.Pipeliner) error {
+				return pipe.ZRem(key, items[0]).Err()
 			})
-
 			return err
 		}
-
-		if err = b.rclient.Watch(context.Background(), watchFunc, key); err != nil {
+		if err = b.rclient.Watch(watchFunc, key); err != nil {
 			return
-		} else {
-			break
 		}
+		result = []byte(items[0])
+		break
 	}
 
 	return
 }
 
-func getQueueGR(config *config.Config, taskProcessor iface.TaskProcessor) string {
-	customQueue := taskProcessor.CustomQueue()
-	if customQueue == "" {
-		return config.DefaultQueue
+// deleteOne is a method to delete a redis message from the message visibility set as well as its temporary HSET
+func (b *BrokerGR_DLQ) deleteOne(signature *tasks.Signature) error {
+
+	gHash := signature.UUID
+	watchFunc := func(tx *redis.Tx) error {
+		if err := b.rclient.Del(gHash).Err(); err != nil {
+			return err
+		}
+		if err := b.rclient.ZRem(messageVisibilitySet, gHash).Err(); err != nil {
+			return err
+		}
+		return nil
 	}
-	return customQueue
+	// not watching gHash, because do not want transaction to cancel in any case
+	return b.rclient.Watch(watchFunc)
 }
