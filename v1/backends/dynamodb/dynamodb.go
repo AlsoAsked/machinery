@@ -577,15 +577,27 @@ func (b *Backend) checkRequiredTablesIfExist(ctx context.Context) error {
 	var (
 		taskTableName  = b.cnf.DynamoDB.TaskStatesTable
 		groupTableName = b.cnf.DynamoDB.GroupMetasTable
+		tableNames     []string
+		startFromTable *string
 	)
-	result, err := b.client.ListTables(ctx, &dynamodb.ListTablesInput{})
-	if err != nil {
-		return err
+	for {
+		result, err := b.client.ListTables(ctx, &dynamodb.ListTablesInput{
+			ExclusiveStartTableName: startFromTable,
+		})
+		if err != nil {
+			return err
+		}
+		tableNames = append(tableNames, result.TableNames...)
+		if result.LastEvaluatedTableName == nil {
+			break
+		}
+		startFromTable = result.LastEvaluatedTableName
 	}
-	if !b.tableExists(taskTableName, result.TableNames) {
+
+	if !b.tableExists(taskTableName, tableNames) {
 		return errors.New("task table doesn't exist")
 	}
-	if !b.tableExists(groupTableName, result.TableNames) {
+	if !b.tableExists(groupTableName, tableNames) {
 		return errors.New("group table doesn't exist")
 	}
 	return nil
