@@ -118,6 +118,25 @@ func (b *Broker) StopConsuming() {
 	log.WARNING.Print("Stop channel")
 }
 
+// StopConsuming is a common part of StopConsuming
+func (b *Broker) StopRetrySQS() {
+	// Do not retry from now on
+	b.retry = false
+	// Stop the retry closure earlier
+	select {
+	case b.retryStopChan <- 1:
+		log.WARNING.Print("Stopping retry closure.")
+	default:
+	}
+}
+
+// StopConsuming is a common part of StopConsuming
+func (b *Broker) StopConsumingSQS() {
+	// Notifying the stop channel stops consuming of messages
+	close(b.stopChan)
+	log.WARNING.Print("Stop channel")
+}
+
 // GetRegisteredTaskNames returns registered tasks names
 func (b *Broker) GetRegisteredTaskNames() []string {
 	b.registeredTaskNames.RLock()

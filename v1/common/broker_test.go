@@ -72,3 +72,33 @@ func TestStopConsuming(t *testing.T) {
 		}
 	})
 }
+
+func TestStopRetryingSQS(t *testing.T) {
+	t.Parallel()
+
+	t.Run("stop retrying sqs", func(t *testing.T) {
+		broker := common.NewBroker(&config.Config{
+			DefaultQueue: "queue",
+		})
+		broker.StartConsuming("", 1, &machinery.Worker{})
+		broker.StopRetrySQS()
+		assert.Equal(t, false, broker.GetRetry())
+	})
+}
+
+func TestStopConsumingSQS(t *testing.T) {
+	t.Parallel()
+
+	t.Run("stop consuming sqs", func(t *testing.T) {
+		broker := common.NewBroker(&config.Config{
+			DefaultQueue: "queue",
+		})
+		broker.StartConsuming("", 1, &machinery.Worker{})
+		broker.StopConsumingSQS()
+		select {
+		case <-broker.GetStopChan():
+		default:
+			assert.Fail(t, "still blocking")
+		}
+	})
+}
