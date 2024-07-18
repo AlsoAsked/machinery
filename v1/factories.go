@@ -16,7 +16,6 @@ import (
 	gcppubsubbroker "github.com/RichardKnop/machinery/v1/brokers/gcppubsub"
 	brokeriface "github.com/RichardKnop/machinery/v1/brokers/iface"
 	redisbroker "github.com/RichardKnop/machinery/v1/brokers/redis"
-	sqsbroker "github.com/RichardKnop/machinery/v1/brokers/sqs"
 	sqsbrokerv2 "github.com/RichardKnop/machinery/v1/brokers/sqsv2"
 
 	amqpbackend "github.com/RichardKnop/machinery/v1/backends/amqp"
@@ -97,19 +96,11 @@ func BrokerFactory(cnf *config.Config) (brokeriface.Broker, error) {
 
 		//even when disabling strict SQS naming check, make sure its still a valid http URL
 		if strings.HasPrefix(cnf.Broker, "https://") || strings.HasPrefix(cnf.Broker, "http://") {
-			if cnf.SQS.ClientV2 != nil {
-				return sqsbrokerv2.New(cnf), nil
-			} else {
-				return sqsbroker.New(cnf), nil
-			}
+			return sqsbrokerv2.New(cnf), nil
 		}
 	} else {
 		if strings.HasPrefix(cnf.Broker, "https://sqs") {
-			if cnf.SQS.ClientV2 != nil {
-				return sqsbrokerv2.New(cnf), nil
-			} else {
-				return sqsbroker.New(cnf), nil
-			}
+			return sqsbrokerv2.New(cnf), nil
 		}
 	}
 

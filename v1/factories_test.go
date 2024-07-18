@@ -15,7 +15,7 @@ import (
 	amqpbroker "github.com/RichardKnop/machinery/v1/brokers/amqp"
 	brokeriface "github.com/RichardKnop/machinery/v1/brokers/iface"
 	redisbroker "github.com/RichardKnop/machinery/v1/brokers/redis"
-	sqsbroker "github.com/RichardKnop/machinery/v1/brokers/sqs"
+	sqsbrokerv2 "github.com/RichardKnop/machinery/v1/brokers/sqsv2"
 
 	amqpbackend "github.com/RichardKnop/machinery/v1/backends/amqp"
 	memcachebackend "github.com/RichardKnop/machinery/v1/backends/memcache"
@@ -218,7 +218,7 @@ func TestBrokerFactory(t *testing.T) {
 
 	actual, err = machinery.BrokerFactory(&cnf)
 	if assert.NoError(t, err) {
-		_, isAWSSQSBroker := actual.(*sqsbroker.Broker)
+		_, isAWSSQSBroker := actual.(*sqsbrokerv2.Broker)
 		assert.True(
 			t,
 			isAWSSQSBroker,
@@ -236,7 +236,7 @@ func TestBrokerFactory(t *testing.T) {
 	os.Setenv("DISABLE_STRICT_SQS_CHECK", "yes")
 	actual, err = machinery.BrokerFactory(&cnf)
 	if assert.NoError(t, err) {
-		_, isAWSSQSBroker := actual.(*sqsbroker.Broker)
+		_, isAWSSQSBroker := actual.(*sqsbrokerv2.Broker)
 		assert.True(
 			t,
 			isAWSSQSBroker,

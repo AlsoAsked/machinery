@@ -22,14 +22,15 @@ import (
 
 // Worker represents a single worker process
 type Worker struct {
-	server          *Server
-	ConsumerTag     string
-	Concurrency     int
-	Queue           string
-	errorHandler    func(err error)
-	preTaskHandler  func(*tasks.Signature)
-	postTaskHandler func(*tasks.Signature)
-	getQueueHandler func() string
+	server            *Server
+	ConsumerTag       string
+	Concurrency       int
+	Queue             string
+	errorHandler      func(err error)
+	preTaskHandler    func(*tasks.Signature)
+	postTaskHandler   func(*tasks.Signature)
+	getQueueHandler   func() string
+	preConsumeHandler func(*Worker) bool
 }
 
 var (
@@ -426,6 +427,11 @@ func (worker *Worker) SetPostTaskHandler(handler func(*tasks.Signature)) {
 // SetGetQueueHandler sets a get queue handler to fetch queue name from
 func (worker *Worker) SetGetQueueHandler(handler func() string) {
 	worker.getQueueHandler = handler
+}
+
+// SetPreConsumeHandler sets a custom handler for the end of a job
+func (worker *Worker) SetPreConsumeHandler(handler func(*Worker) bool) {
+	worker.preConsumeHandler = handler
 }
 
 // GetServer returns server

@@ -107,7 +107,6 @@ func (b *Broker) StartConsuming(consumerTag string, concurrency int, taskProcess
 			select {
 			// A way to stop this goroutine from b.StopConsuming
 			case <-b.stopReceivingChan:
-				close(deliveries)
 				return
 			case <-pool:
 				qURL := b.getQueueURL(taskProcessor)
@@ -137,15 +136,17 @@ func (b *Broker) StartConsuming(consumerTag string, concurrency int, taskProcess
 
 // StopConsuming quits the loop
 func (b *Broker) StopConsuming() {
-	b.Broker.StopConsuming()
+	b.Broker.StopRetrySQS()
 
 	b.stopReceiving()
 
-	// Waiting for any tasks being processed to finish
-	b.processingWG.Wait()
-
 	// Waiting for the receiving goroutine to have stopped
 	b.receivingWG.Wait()
+
+	b.Broker.StopConsumingSQS()
+
+	// Waiting for any tasks being processed to finish
+	b.processingWG.Wait()
 }
 
 // Publish places a new message on the default queue

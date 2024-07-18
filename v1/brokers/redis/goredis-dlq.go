@@ -39,9 +39,10 @@ type BrokerGR_DLQ struct {
 	processingWG sync.WaitGroup // use wait group to make sure task processing completes
 	delayedWG    sync.WaitGroup
 	// If set, path to a socket file overrides hostname
-	socketPath string
-	redsync    *redsync.Redsync
-	redisOnce  sync.Once
+	socketPath           string
+	redsync              *redsync.Redsync
+	redisOnce            sync.Once
+	redisDelayedTasksKey string
 }
 
 // NewGR_DLQ creates new Broker instance
@@ -71,7 +72,7 @@ func NewGR_DLQ(cnf *config.Config, addrs []string, password string, db int) ifac
 	b.rclient = redis.NewUniversalClient(ropt)
 
 	if cnf.Redis.DelayedTasksKey != "" {
-		redisDelayedTasksKey = cnf.Redis.DelayedTasksKey
+		b.redisDelayedTasksKey = cnf.Redis.DelayedTasksKey
 	}
 	return b
 }
@@ -148,7 +149,7 @@ func (b *BrokerGR_DLQ) StartConsuming(consumerTag string, concurrency int, taskP
 			case <-b.GetStopChan():
 				return
 			default:
-				task, err := b.nextDelayedTask(redisDelayedTasksKey)
+				task, err := b.nextDelayedTask(b.redisDelayedTasksKey)
 				if err != nil {
 					continue
 				}
@@ -157,7 +158,7 @@ func (b *BrokerGR_DLQ) StartConsuming(consumerTag string, concurrency int, taskP
 				decoder := json.NewDecoder(bytes.NewReader(task))
 				decoder.UseNumber()
 				if err := decoder.Decode(signature); err != nil {
-					log.ERROR.Print(errs.NewErrCouldNotUnmarshaTaskSignature(task, err))
+					log.ERROR.Print(errs.NewErrCouldNotUnmarshalTaskSignature(task, err))
 				}
 
 				if err := b.Publish(context.Background(), signature); err != nil {
@@ -205,7 +206,7 @@ func (b *BrokerGR_DLQ) Publish(ctx context.Context, signature *tasks.Signature) 
 
 		if signature.ETA.After(now) {
 			score := signature.ETA.UnixNano()
-			err = b.rclient.ZAdd(redisDelayedTasksKey, redis.Z{Score: float64(score), Member: msg}).Err()
+			err = b.rclient.ZAdd(b.redisDelayedTasksKey, redis.Z{Score: float64(score), Member: msg}).Err()
 			return err
 		}
 	}
@@ -240,7 +241,7 @@ func (b *BrokerGR_DLQ) GetPendingTasks(queue string) ([]*tasks.Signature, error)
 
 // GetDelayedTasks returns a slice of task signatures that are scheduled, but not yet in the queue
 func (b *BrokerGR_DLQ) GetDelayedTasks() ([]*tasks.Signature, error) {
-	results, err := b.rclient.ZRange(redisDelayedTasksKey, 0, -1).Result()
+	results, err := b.rclient.ZRange(b.redisDelayedTasksKey, 0, -1).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +299,7 @@ func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProce
 	decoder := json.NewDecoder(bytes.NewReader(delivery))
 	decoder.UseNumber()
 	if err := decoder.Decode(signature); err != nil {
-		return errs.NewErrCouldNotUnmarshaTaskSignature(delivery, err)
+		return errs.NewErrCouldNotUnmarshalTaskSignature(delivery, err)
 	}
 	// propagating hash UUID for possible application usage, for example, refreshing visibility
 	oldUuid := signature.UUID
