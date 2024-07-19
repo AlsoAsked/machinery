@@ -82,7 +82,7 @@ func New(cnf *config.Config, projectID, subscriptionName string) (iface.Broker, 
 }
 
 // StartConsuming enters a loop and waits for incoming messages
-func (b *Broker) StartConsuming(consumerTag string, concurrency int, taskProcessor iface.TaskProcessor) (bool, error) {
+func (b *Broker) StartConsuming(ctx context.Context, consumerTag string, concurrency int, taskProcessor iface.TaskProcessor) (bool, error) {
 	b.Broker.StartConsuming(consumerTag, concurrency, taskProcessor)
 
 	sub := b.service.Subscription(b.subscriptionName)
@@ -102,7 +102,7 @@ func (b *Broker) StartConsuming(consumerTag string, concurrency int, taskProcess
 
 	for {
 		err := sub.Receive(ctx, func(_ctx context.Context, msg *pubsub.Message) {
-			b.consumeOne(msg, taskProcessor)
+			b.consumeOne(ctx, msg, taskProcessor)
 		})
 		if err == nil {
 			break
@@ -164,7 +164,7 @@ func (b *Broker) Publish(ctx context.Context, signature *tasks.Signature) error 
 }
 
 // consumeOne processes a single message using TaskProcessor
-func (b *Broker) consumeOne(delivery *pubsub.Message, taskProcessor iface.TaskProcessor) {
+func (b *Broker) consumeOne(ctx context.Context, delivery *pubsub.Message, taskProcessor iface.TaskProcessor) {
 	if len(delivery.Data) == 0 {
 		delivery.Nack()
 		log.ERROR.Printf("received an empty message, the delivery was %v", delivery)
@@ -185,7 +185,7 @@ func (b *Broker) consumeOne(delivery *pubsub.Message, taskProcessor iface.TaskPr
 		log.ERROR.Printf("task %s is not registered", sig.Name)
 	}
 
-	err := taskProcessor.Process(sig)
+	err := taskProcessor.Process(ctx, sig)
 	if err != nil {
 		delivery.Nack()
 		log.ERROR.Printf("Failed process of task", err)

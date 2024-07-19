@@ -1,22 +1,23 @@
 package dynamodb
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws/session"
+	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 
 	"github.com/RichardKnop/machinery/v1/backends/iface"
 	"github.com/RichardKnop/machinery/v1/common"
 	"github.com/RichardKnop/machinery/v1/config"
 	"github.com/RichardKnop/machinery/v1/log"
 	"github.com/RichardKnop/machinery/v1/tasks"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
 const (
@@ -28,24 +29,28 @@ const (
 type Backend struct {
 	common.Backend
 	cnf    *config.Config
-	client dynamodbiface.DynamoDBAPI
+	client iface.DynamoDBAPI
 }
 
 // New creates a Backend instance
-func New(cnf *config.Config) iface.Backend {
+func New(ctx context.Context, cnf *config.Config) iface.Backend {
 	backend := &Backend{Backend: common.NewBackend(cnf), cnf: cnf}
 
 	if cnf.DynamoDB != nil && cnf.DynamoDB.Client != nil {
+		// Use provided *DynamoDB client
 		backend.client = cnf.DynamoDB.Client
 	} else {
-		sess := session.Must(session.NewSessionWithOptions(session.Options{
-			SharedConfigState: session.SharedConfigEnable,
-		}))
-		backend.client = dynamodb.New(sess)
+		// Initialize a session that the SDK will use to load credentials from the shared credentials file, ~/.aws/credentials.
+		// See details on: https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html
+		// Also, env AWS_REGION is also required
+		cfg, _ := awscfg.LoadDefaultConfig(context.TODO())
+		backend.client = dynamodb.NewFromConfig(cfg)
 	}
 
+	backend.cnf = cnf
+
 	// Check if needed tables exist
-	err := backend.checkRequiredTablesIfExist()
+	err := backend.checkRequiredTablesIfExist(ctx)
 	if err != nil {
 		log.FATAL.Printf("Failed to prepare tables. Error: %v", err)
 	}
@@ -53,14 +58,14 @@ func New(cnf *config.Config) iface.Backend {
 }
 
 // InitGroup ...
-func (b *Backend) InitGroup(groupUUID string, taskUUIDs []string) error {
+func (b *Backend) InitGroup(ctx context.Context, groupUUID string, taskUUIDs []string) error {
 	meta := tasks.GroupMeta{
 		GroupUUID: groupUUID,
 		TaskUUIDs: taskUUIDs,
 		CreatedAt: time.Now().UTC(),
 		TTL:       b.getExpirationTime(),
 	}
-	av, err := dynamodbattribute.MarshalMap(meta)
+	av, err := attributevalue.MarshalMap(meta)
 	if err != nil {
 		log.ERROR.Printf("Error when marshaling Dynamodb attributes. Err: %v", err)
 		return err
@@ -69,7 +74,7 @@ func (b *Backend) InitGroup(groupUUID string, taskUUIDs []string) error {
 		Item:      av,
 		TableName: aws.String(b.cnf.DynamoDB.GroupMetasTable),
 	}
-	_, err = b.client.PutItem(input)
+	_, err = b.client.PutItem(ctx, input)
 
 	if err != nil {
 		log.ERROR.Printf("Got error when calling PutItem: %v; Error: %v", input, err)
@@ -79,13 +84,13 @@ func (b *Backend) InitGroup(groupUUID string, taskUUIDs []string) error {
 }
 
 // GroupCompleted ...
-func (b *Backend) GroupCompleted(groupUUID string, groupTaskCount int) (bool, error) {
-	groupMeta, err := b.getGroupMeta(groupUUID)
+func (b *Backend) GroupCompleted(ctx context.Context, groupUUID string, groupTaskCount int) (bool, error) {
+	groupMeta, err := b.getGroupMeta(ctx, groupUUID)
 	if err != nil {
 		return false, err
 	}
 
-	taskStates, err := b.getStates(groupMeta.TaskUUIDs)
+	taskStates, err := b.getStates(ctx, groupMeta.TaskUUIDs)
 	if err != nil {
 		return false, err
 	}
@@ -100,19 +105,19 @@ func (b *Backend) GroupCompleted(groupUUID string, groupTaskCount int) (bool, er
 }
 
 // GroupTaskStates ...
-func (b *Backend) GroupTaskStates(groupUUID string, groupTaskCount int) ([]*tasks.TaskState, error) {
-	groupMeta, err := b.getGroupMeta(groupUUID)
+func (b *Backend) GroupTaskStates(ctx context.Context, groupUUID string, groupTaskCount int) ([]*tasks.TaskState, error) {
+	groupMeta, err := b.getGroupMeta(ctx, groupUUID)
 	if err != nil {
 		return nil, err
 	}
 
-	return b.getStates(groupMeta.TaskUUIDs)
+	return b.getStates(ctx, groupMeta.TaskUUIDs)
 }
 
 // TriggerChord ...
-func (b *Backend) TriggerChord(groupUUID string) (bool, error) {
+func (b *Backend) TriggerChord(ctx context.Context, groupUUID string) (bool, error) {
 	// Get the group meta data
-	groupMeta, err := b.getGroupMeta(groupUUID)
+	groupMeta, err := b.getGroupMeta(ctx, groupUUID)
 
 	if err != nil {
 		return false, err
@@ -125,19 +130,19 @@ func (b *Backend) TriggerChord(groupUUID string) (bool, error) {
 
 	// If group meta is locked, wait until it's unlocked
 	for groupMeta.Lock {
-		groupMeta, _ = b.getGroupMeta(groupUUID)
+		groupMeta, _ = b.getGroupMeta(ctx, groupUUID)
 		log.WARNING.Printf("Group [%s] locked, waiting", groupUUID)
 		time.Sleep(time.Millisecond * 5)
 	}
 
 	// Acquire lock
-	if err = b.lockGroupMeta(groupUUID); err != nil {
+	if err = b.lockGroupMeta(ctx, groupUUID); err != nil {
 		return false, err
 	}
-	defer b.unlockGroupMeta(groupUUID)
+	defer b.unlockGroupMeta(ctx, groupUUID)
 
 	// update group meta data
-	err = b.chordTriggered(groupUUID)
+	err = b.chordTriggered(ctx, groupUUID)
 	if err != nil {
 		return false, err
 	}
@@ -145,51 +150,51 @@ func (b *Backend) TriggerChord(groupUUID string) (bool, error) {
 }
 
 // SetStatePending ...
-func (b *Backend) SetStatePending(signature *tasks.Signature) error {
+func (b *Backend) SetStatePending(ctx context.Context, signature *tasks.Signature) error {
 	taskState := tasks.NewPendingTaskState(signature)
 	// taskUUID is the primary key of the table, so a new task need to be created first, instead of using dynamodb.UpdateItemInput directly
-	return b.initTaskState(taskState)
+	return b.initTaskState(ctx, taskState)
 }
 
 // SetStateReceived ...
-func (b *Backend) SetStateReceived(signature *tasks.Signature) error {
+func (b *Backend) SetStateReceived(ctx context.Context, signature *tasks.Signature) error {
 	taskState := tasks.NewReceivedTaskState(signature)
-	return b.setTaskState(taskState)
+	return b.setTaskState(ctx, taskState)
 }
 
 // SetStateStarted ...
-func (b *Backend) SetStateStarted(signature *tasks.Signature) error {
+func (b *Backend) SetStateStarted(ctx context.Context, signature *tasks.Signature) error {
 	taskState := tasks.NewStartedTaskState(signature)
-	return b.setTaskState(taskState)
+	return b.setTaskState(ctx, taskState)
 }
 
 // SetStateRetry ...
-func (b *Backend) SetStateRetry(signature *tasks.Signature) error {
+func (b *Backend) SetStateRetry(ctx context.Context, signature *tasks.Signature) error {
 	taskState := tasks.NewRetryTaskState(signature)
-	return b.setTaskState(taskState)
+	return b.setTaskState(ctx, taskState)
 }
 
 // SetStateSuccess ...
-func (b *Backend) SetStateSuccess(signature *tasks.Signature, results []*tasks.TaskResult) error {
+func (b *Backend) SetStateSuccess(ctx context.Context, signature *tasks.Signature, results []*tasks.TaskResult) error {
 	taskState := tasks.NewSuccessTaskState(signature, results)
 	taskState.TTL = b.getExpirationTime()
-	return b.setTaskState(taskState)
+	return b.setTaskState(ctx, taskState)
 }
 
 // SetStateFailure ...
-func (b *Backend) SetStateFailure(signature *tasks.Signature, err string) error {
+func (b *Backend) SetStateFailure(ctx context.Context, signature *tasks.Signature, err string) error {
 	taskState := tasks.NewFailureTaskState(signature, err)
 	taskState.TTL = b.getExpirationTime()
-	return b.updateToFailureStateWithError(taskState)
+	return b.updateToFailureStateWithError(ctx, taskState)
 }
 
 // GetState ...
-func (b *Backend) GetState(taskUUID string) (*tasks.TaskState, error) {
-	result, err := b.client.GetItem(&dynamodb.GetItemInput{
+func (b *Backend) GetState(ctx context.Context, taskUUID string) (*tasks.TaskState, error) {
+	result, err := b.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(b.cnf.DynamoDB.TaskStatesTable),
-		Key: map[string]*dynamodb.AttributeValue{
-			"TaskUUID": {
-				S: aws.String(taskUUID),
+		Key: map[string]types.AttributeValue{
+			"TaskUUID": &types.AttributeValueMemberS{
+				Value: taskUUID,
 			},
 		},
 		ConsistentRead: aws.Bool(true),
@@ -202,7 +207,7 @@ func (b *Backend) GetState(taskUUID string) (*tasks.TaskState, error) {
 
 // getStates returns the current states for the given list of tasks.
 // It uses batch fetch API. If any keys fail to fetch, it'll retry with exponential backoff until maxFetchAttempts times.
-func (b *Backend) getStates(tasksToFetch []string) ([]*tasks.TaskState, error) {
+func (b *Backend) getStates(ctx context.Context, tasksToFetch []string) ([]*tasks.TaskState, error) {
 	fetchedTaskStates := make([]*tasks.TaskState, 0, len(tasksToFetch))
 	var unfetchedTaskIDs []string
 
@@ -210,7 +215,7 @@ func (b *Backend) getStates(tasksToFetch []string) ([]*tasks.TaskState, error) {
 	for attempt := 0; len(tasksToFetch) > 0 && attempt < MaxFetchAttempts; attempt++ {
 		unfetchedTaskIDs = nil
 		for _, batch := range chunkTasks(tasksToFetch, BatchItemsLimit) {
-			fetched, unfetched, err := b.batchFetchTaskStates(batch)
+			fetched, unfetched, err := b.batchFetchTaskStates(ctx, batch)
 			if err != nil {
 				return nil, err
 			}
@@ -238,19 +243,19 @@ func (b *Backend) getStates(tasksToFetch []string) ([]*tasks.TaskState, error) {
 // DynamoDB's BatchGetItem() can return partial results. If there are any unfetched keys, they are returned as second
 // return value so that the caller can retry those keys.
 // https://docs.aws.amazon.com/sdk-for-go/api/service/dynamodb/#DynamoDB.BatchGetItem
-func (b *Backend) batchFetchTaskStates(taskUUIDs []string) ([]*tasks.TaskState, []string, error) {
+func (b *Backend) batchFetchTaskStates(ctx context.Context, taskUUIDs []string) ([]*tasks.TaskState, []string, error) {
 	tableName := b.cnf.DynamoDB.TaskStatesTable
-	keys := make([]map[string]*dynamodb.AttributeValue, len(taskUUIDs))
+	keys := make([]map[string]types.AttributeValue, len(taskUUIDs))
 	for i, tid := range taskUUIDs {
-		keys[i] = map[string]*dynamodb.AttributeValue{
-			"TaskUUID": {
-				S: aws.String(tid),
+		keys[i] = map[string]types.AttributeValue{
+			"TaskUUID": &types.AttributeValueMemberS{
+				Value: tid,
 			},
 		}
 	}
 
 	input := &dynamodb.BatchGetItemInput{
-		RequestItems: map[string]*dynamodb.KeysAndAttributes{
+		RequestItems: map[string]types.KeysAndAttributes{
 			tableName: {
 				ConsistentRead: aws.Bool(true),
 				Keys:           keys,
@@ -258,7 +263,7 @@ func (b *Backend) batchFetchTaskStates(taskUUIDs []string) ([]*tasks.TaskState, 
 		},
 	}
 
-	result, err := b.client.BatchGetItem(input)
+	result, err := b.client.BatchGetItem(ctx, input)
 	if err != nil {
 		return nil, nil, fmt.Errorf("BatchGetItem failed. Error: [%s]", err)
 	}
@@ -269,33 +274,30 @@ func (b *Backend) batchFetchTaskStates(taskUUIDs []string) ([]*tasks.TaskState, 
 	}
 
 	states := []*tasks.TaskState{}
-	if err := dynamodbattribute.UnmarshalListOfMaps(fetchedKeys, &states); err != nil {
+	if err := attributevalue.UnmarshalListOfMaps(fetchedKeys, &states); err != nil {
 		return nil, nil, fmt.Errorf("Got error when unmarshal map. Error: %v", err)
 	}
 
 	// Look for any unprocessed keys
-	var unfetchedKeys []string
-	if result.UnprocessedKeys[tableName] != nil {
-		unfetchedKeys, err = getUnfetchedKeys(result.UnprocessedKeys[tableName])
-		if err != nil {
-			return nil, nil, fmt.Errorf("unable to fetch some keys: [%+v]. Error: [%s]", result.UnprocessedKeys, err)
-		}
+	unfetchedKeys, err := getUnfetchedKeys(result.UnprocessedKeys[tableName])
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to fetch some keys: [%+v]. Error: [%s]", result.UnprocessedKeys, err)
 	}
 
 	return states, unfetchedKeys, nil
 }
 
 // PurgeState ...
-func (b *Backend) PurgeState(taskUUID string) error {
+func (b *Backend) PurgeState(ctx context.Context, taskUUID string) error {
 	input := &dynamodb.DeleteItemInput{
-		Key: map[string]*dynamodb.AttributeValue{
-			"TaskUUID": {
-				N: aws.String(taskUUID),
+		Key: map[string]types.AttributeValue{
+			"TaskUUID": &types.AttributeValueMemberS{
+				Value: taskUUID,
 			},
 		},
 		TableName: aws.String(b.cnf.DynamoDB.TaskStatesTable),
 	}
-	_, err := b.client.DeleteItem(input)
+	_, err := b.client.DeleteItem(ctx, input)
 
 	if err != nil {
 		return err
@@ -304,16 +306,16 @@ func (b *Backend) PurgeState(taskUUID string) error {
 }
 
 // PurgeGroupMeta ...
-func (b *Backend) PurgeGroupMeta(groupUUID string) error {
+func (b *Backend) PurgeGroupMeta(ctx context.Context, groupUUID string) error {
 	input := &dynamodb.DeleteItemInput{
-		Key: map[string]*dynamodb.AttributeValue{
-			"GroupUUID": {
-				N: aws.String(groupUUID),
+		Key: map[string]types.AttributeValue{
+			"GroupUUID": &types.AttributeValueMemberS{
+				Value: groupUUID,
 			},
 		},
 		TableName: aws.String(b.cnf.DynamoDB.GroupMetasTable),
 	}
-	_, err := b.client.DeleteItem(input)
+	_, err := b.client.DeleteItem(ctx, input)
 
 	if err != nil {
 		return err
@@ -321,12 +323,12 @@ func (b *Backend) PurgeGroupMeta(groupUUID string) error {
 	return nil
 }
 
-func (b *Backend) getGroupMeta(groupUUID string) (*tasks.GroupMeta, error) {
-	result, err := b.client.GetItem(&dynamodb.GetItemInput{
+func (b *Backend) getGroupMeta(ctx context.Context, groupUUID string) (*tasks.GroupMeta, error) {
+	result, err := b.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(b.cnf.DynamoDB.GroupMetasTable),
-		Key: map[string]*dynamodb.AttributeValue{
-			"GroupUUID": {
-				S: aws.String(groupUUID),
+		Key: map[string]types.AttributeValue{
+			"GroupUUID": &types.AttributeValueMemberS{
+				Value: groupUUID,
 			},
 		},
 		ConsistentRead: aws.Bool(true),
@@ -343,43 +345,43 @@ func (b *Backend) getGroupMeta(groupUUID string) (*tasks.GroupMeta, error) {
 	return item, nil
 }
 
-func (b *Backend) lockGroupMeta(groupUUID string) error {
-	err := b.updateGroupMetaLock(groupUUID, true)
+func (b *Backend) lockGroupMeta(ctx context.Context, groupUUID string) error {
+	err := b.updateGroupMetaLock(ctx, groupUUID, true)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (b *Backend) unlockGroupMeta(groupUUID string) error {
-	err := b.updateGroupMetaLock(groupUUID, false)
+func (b *Backend) unlockGroupMeta(ctx context.Context, groupUUID string) error {
+	err := b.updateGroupMetaLock(ctx, groupUUID, false)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (b *Backend) updateGroupMetaLock(groupUUID string, status bool) error {
+func (b *Backend) updateGroupMetaLock(ctx context.Context, groupUUID string, status bool) error {
 	input := &dynamodb.UpdateItemInput{
-		ExpressionAttributeNames: map[string]*string{
-			"#L": aws.String("Lock"),
+		ExpressionAttributeNames: map[string]string{
+			"#L": "Lock",
 		},
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":l": {
-				BOOL: aws.Bool(status),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":l": &types.AttributeValueMemberBOOL{
+				Value: status,
 			},
 		},
-		Key: map[string]*dynamodb.AttributeValue{
-			"GroupUUID": {
-				S: aws.String(groupUUID),
+		Key: map[string]types.AttributeValue{
+			"GroupUUID": &types.AttributeValueMemberS{
+				Value: groupUUID,
 			},
 		},
-		ReturnValues:     aws.String("UPDATED_NEW"),
+		ReturnValues:     types.ReturnValueUpdatedNew,
 		TableName:        aws.String(b.cnf.DynamoDB.GroupMetasTable),
 		UpdateExpression: aws.String("SET #L = :l"),
 	}
 
-	_, err := b.client.UpdateItem(input)
+	_, err := b.client.UpdateItem(ctx, input)
 
 	if err != nil {
 		return err
@@ -387,27 +389,27 @@ func (b *Backend) updateGroupMetaLock(groupUUID string, status bool) error {
 	return nil
 }
 
-func (b *Backend) chordTriggered(groupUUID string) error {
+func (b *Backend) chordTriggered(ctx context.Context, groupUUID string) error {
 	input := &dynamodb.UpdateItemInput{
-		ExpressionAttributeNames: map[string]*string{
-			"#CT": aws.String("ChordTriggered"),
+		ExpressionAttributeNames: map[string]string{
+			"#CT": "ChordTriggered",
 		},
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":ct": {
-				BOOL: aws.Bool(true),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":ct": &types.AttributeValueMemberBOOL{
+				Value: true,
 			},
 		},
-		Key: map[string]*dynamodb.AttributeValue{
-			"GroupUUID": {
-				S: aws.String(groupUUID),
+		Key: map[string]types.AttributeValue{
+			"GroupUUID": &types.AttributeValueMemberS{
+				Value: groupUUID,
 			},
 		},
-		ReturnValues:     aws.String("UPDATED_NEW"),
+		ReturnValues:     types.ReturnValueUpdatedNew,
 		TableName:        aws.String(b.cnf.DynamoDB.GroupMetasTable),
 		UpdateExpression: aws.String("SET #CT = :ct"),
 	}
 
-	_, err := b.client.UpdateItem(input)
+	_, err := b.client.UpdateItem(ctx, input)
 
 	if err != nil {
 		return err
@@ -415,54 +417,54 @@ func (b *Backend) chordTriggered(groupUUID string) error {
 	return nil
 }
 
-func (b *Backend) setTaskState(taskState *tasks.TaskState) error {
-	expAttributeNames := map[string]*string{
-		"#S": aws.String("State"),
+func (b *Backend) setTaskState(ctx context.Context, taskState *tasks.TaskState) error {
+	expAttributeNames := map[string]string{
+		"#S": "State",
 	}
-	expAttributeValues := map[string]*dynamodb.AttributeValue{
-		":s": {
-			S: aws.String(taskState.State),
+	expAttributeValues := map[string]types.AttributeValue{
+		":s": &types.AttributeValueMemberS{
+			Value: taskState.State,
 		},
 	}
-	keyAttributeValues := map[string]*dynamodb.AttributeValue{
-		"TaskUUID": {
-			S: aws.String(taskState.TaskUUID),
+	keyAttributeValues := map[string]types.AttributeValue{
+		"TaskUUID": &types.AttributeValueMemberS{
+			Value: taskState.TaskUUID,
 		},
 	}
 	exp := "SET #S = :s"
 	if !taskState.CreatedAt.IsZero() {
-		expAttributeNames["#C"] = aws.String("CreatedAt")
-		expAttributeValues[":c"] = &dynamodb.AttributeValue{
-			S: aws.String(taskState.CreatedAt.String()),
+		expAttributeNames["#C"] = "CreatedAt"
+		expAttributeValues[":c"] = &types.AttributeValueMemberS{
+			Value: taskState.CreatedAt.String(),
 		}
 		exp += ", #C = :c"
 	}
 	if taskState.TTL > 0 {
-		expAttributeNames["#T"] = aws.String("TTL")
-		expAttributeValues[":t"] = &dynamodb.AttributeValue{
-			N: aws.String(fmt.Sprintf("%d", taskState.TTL)),
+		expAttributeNames["#T"] = "TTL"
+		expAttributeValues[":t"] = &types.AttributeValueMemberN{
+			Value: fmt.Sprintf("%d", taskState.TTL),
 		}
 		exp += ", #T = :t"
 	}
 	if taskState.Results != nil && len(taskState.Results) != 0 {
-		expAttributeNames["#R"] = aws.String("Results")
-		var results []*dynamodb.AttributeValue
+		expAttributeNames["#R"] = "Results"
+		var results []types.AttributeValue
 		for _, r := range taskState.Results {
-			avMap := map[string]*dynamodb.AttributeValue{
-				"Type": {
-					S: aws.String(r.Type),
+			avMap := map[string]types.AttributeValue{
+				"Type": &types.AttributeValueMemberS{
+					Value: r.Type,
 				},
-				"Value": {
-					S: aws.String(fmt.Sprintf("%v", r.Value)),
+				"Value": &types.AttributeValueMemberS{
+					Value: fmt.Sprintf("%v", r.Value),
 				},
 			}
-			rs := &dynamodb.AttributeValue{
-				M: avMap,
+			rs := &types.AttributeValueMemberM{
+				Value: avMap,
 			}
 			results = append(results, rs)
 		}
-		expAttributeValues[":r"] = &dynamodb.AttributeValue{
-			L: results,
+		expAttributeValues[":r"] = &types.AttributeValueMemberL{
+			Value: results,
 		}
 		exp += ", #R = :r"
 	}
@@ -470,12 +472,12 @@ func (b *Backend) setTaskState(taskState *tasks.TaskState) error {
 		ExpressionAttributeNames:  expAttributeNames,
 		ExpressionAttributeValues: expAttributeValues,
 		Key:                       keyAttributeValues,
-		ReturnValues:              aws.String("UPDATED_NEW"),
+		ReturnValues:              types.ReturnValueUpdatedNew,
 		TableName:                 aws.String(b.cnf.DynamoDB.TaskStatesTable),
 		UpdateExpression:          aws.String(exp),
 	}
 
-	_, err := b.client.UpdateItem(input)
+	_, err := b.client.UpdateItem(ctx, input)
 
 	if err != nil {
 		return err
@@ -483,8 +485,8 @@ func (b *Backend) setTaskState(taskState *tasks.TaskState) error {
 	return nil
 }
 
-func (b *Backend) initTaskState(taskState *tasks.TaskState) error {
-	av, err := dynamodbattribute.MarshalMap(taskState)
+func (b *Backend) initTaskState(ctx context.Context, taskState *tasks.TaskState) error {
+	av, err := attributevalue.MarshalMap(taskState)
 	input := &dynamodb.PutItemInput{
 		Item:      av,
 		TableName: aws.String(b.cnf.DynamoDB.TaskStatesTable),
@@ -492,7 +494,7 @@ func (b *Backend) initTaskState(taskState *tasks.TaskState) error {
 	if err != nil {
 		return err
 	}
-	_, err = b.client.PutItem(input)
+	_, err = b.client.PutItem(ctx, input)
 
 	if err != nil {
 		return err
@@ -500,39 +502,39 @@ func (b *Backend) initTaskState(taskState *tasks.TaskState) error {
 	return nil
 }
 
-func (b *Backend) updateToFailureStateWithError(taskState *tasks.TaskState) error {
+func (b *Backend) updateToFailureStateWithError(ctx context.Context, taskState *tasks.TaskState) error {
 	input := &dynamodb.UpdateItemInput{
-		ExpressionAttributeNames: map[string]*string{
-			"#S": aws.String("State"),
-			"#E": aws.String("Error"),
+		ExpressionAttributeNames: map[string]string{
+			"#S": "State",
+			"#E": "Error",
 		},
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":s": {
-				S: aws.String(taskState.State),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":s": &types.AttributeValueMemberS{
+				Value: taskState.State,
 			},
-			":e": {
-				S: aws.String(taskState.Error),
-			},
-		},
-		Key: map[string]*dynamodb.AttributeValue{
-			"TaskUUID": {
-				S: aws.String(taskState.TaskUUID),
+			":e": &types.AttributeValueMemberS{
+				Value: taskState.Error,
 			},
 		},
-		ReturnValues:     aws.String("UPDATED_NEW"),
+		Key: map[string]types.AttributeValue{
+			"TaskUUID": &types.AttributeValueMemberS{
+				Value: taskState.TaskUUID,
+			},
+		},
+		ReturnValues:     types.ReturnValueUpdatedNew,
 		TableName:        aws.String(b.cnf.DynamoDB.TaskStatesTable),
 		UpdateExpression: aws.String("SET #S = :s, #E = :e"),
 	}
 
 	if taskState.TTL > 0 {
-		input.ExpressionAttributeNames["#T"] = aws.String("TTL")
-		input.ExpressionAttributeValues[":t"] = &dynamodb.AttributeValue{
-			N: aws.String(fmt.Sprintf("%d", taskState.TTL)),
+		input.ExpressionAttributeNames["#T"] = "TTL"
+		input.ExpressionAttributeValues[":t"] = &types.AttributeValueMemberN{
+			Value: fmt.Sprintf("%d", taskState.TTL),
 		}
-		input.UpdateExpression = aws.String(aws.StringValue(input.UpdateExpression) + ", #T = :t")
+		input.UpdateExpression = aws.String(aws.ToString(input.UpdateExpression) + ", #T = :t")
 	}
 
-	_, err := b.client.UpdateItem(input)
+	_, err := b.client.UpdateItem(ctx, input)
 
 	if err != nil {
 		return err
@@ -547,7 +549,7 @@ func (b *Backend) unmarshalGroupMetaGetItemResult(result *dynamodb.GetItemOutput
 		return nil, err
 	}
 	item := tasks.GroupMeta{}
-	err := dynamodbattribute.UnmarshalMap(result.Item, &item)
+	err := attributevalue.UnmarshalMap(result.Item, &item)
 	if err != nil {
 		log.ERROR.Printf("Got error when unmarshal map. Error: %v", err)
 		return nil, err
@@ -562,7 +564,7 @@ func (b *Backend) unmarshalTaskStateGetItemResult(result *dynamodb.GetItemOutput
 		return nil, err
 	}
 	state := tasks.TaskState{}
-	err := dynamodbattribute.UnmarshalMap(result.Item, &state)
+	err := attributevalue.UnmarshalMap(result.Item, &state)
 	if err != nil {
 		log.ERROR.Printf("Got error when unmarshal map. Error: %v", err)
 		return nil, err
@@ -570,12 +572,12 @@ func (b *Backend) unmarshalTaskStateGetItemResult(result *dynamodb.GetItemOutput
 	return &state, nil
 }
 
-func (b *Backend) checkRequiredTablesIfExist() error {
+func (b *Backend) checkRequiredTablesIfExist(ctx context.Context) error {
 	var (
 		taskTableName  = b.cnf.DynamoDB.TaskStatesTable
 		groupTableName = b.cnf.DynamoDB.GroupMetasTable
 	)
-	result, err := b.client.ListTables(&dynamodb.ListTablesInput{})
+	result, err := b.client.ListTables(ctx, &dynamodb.ListTablesInput{})
 	if err != nil {
 		return err
 	}
@@ -588,9 +590,9 @@ func (b *Backend) checkRequiredTablesIfExist() error {
 	return nil
 }
 
-func (b *Backend) tableExists(tableName string, tableNames []*string) bool {
+func (b *Backend) tableExists(tableName string, tableNames []string) bool {
 	for _, t := range tableNames {
-		if tableName == *t {
+		if tableName == t {
 			return true
 		}
 	}
@@ -607,10 +609,10 @@ func (b *Backend) getExpirationTime() int64 {
 }
 
 // getUnfetchedKeys returns keys that were not fetched in a batch request.
-func getUnfetchedKeys(unprocessed *dynamodb.KeysAndAttributes) ([]string, error) {
+func getUnfetchedKeys(unprocessed types.KeysAndAttributes) ([]string, error) {
 	states := []*tasks.TaskState{}
 	var taskIDs []string
-	if err := dynamodbattribute.UnmarshalListOfMaps(unprocessed.Keys, &states); err != nil {
+	if err := attributevalue.UnmarshalListOfMaps(unprocessed.Keys, &states); err != nil {
 		return nil, fmt.Errorf("Got error when unmarshal map. Error: %v", err)
 	}
 	for _, s := range states {

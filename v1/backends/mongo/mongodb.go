@@ -40,24 +40,24 @@ func New(cnf *config.Config) (iface.Backend, error) {
 }
 
 // InitGroup creates and saves a group meta data object
-func (b *Backend) InitGroup(groupUUID string, taskUUIDs []string) error {
+func (b *Backend) InitGroup(ctx context.Context, groupUUID string, taskUUIDs []string) error {
 	groupMeta := &tasks.GroupMeta{
 		GroupUUID: groupUUID,
 		TaskUUIDs: taskUUIDs,
 		CreatedAt: time.Now().UTC(),
 	}
-	_, err := b.groupMetasCollection().InsertOne(context.Background(), groupMeta)
+	_, err := b.groupMetasCollection(ctx).InsertOne(ctx, groupMeta)
 	return err
 }
 
 // GroupCompleted returns true if all tasks in a group finished
-func (b *Backend) GroupCompleted(groupUUID string, groupTaskCount int) (bool, error) {
-	groupMeta, err := b.getGroupMeta(groupUUID)
+func (b *Backend) GroupCompleted(ctx context.Context, groupUUID string, groupTaskCount int) (bool, error) {
+	groupMeta, err := b.getGroupMeta(ctx, groupUUID)
 	if err != nil {
 		return false, err
 	}
 
-	taskStates, err := b.getStates(groupMeta.TaskUUIDs...)
+	taskStates, err := b.getStates(ctx, groupMeta.TaskUUIDs...)
 	if err != nil {
 		return false, err
 	}
@@ -73,20 +73,20 @@ func (b *Backend) GroupCompleted(groupUUID string, groupTaskCount int) (bool, er
 }
 
 // GroupTaskStates returns states of all tasks in the group
-func (b *Backend) GroupTaskStates(groupUUID string, groupTaskCount int) ([]*tasks.TaskState, error) {
-	groupMeta, err := b.getGroupMeta(groupUUID)
+func (b *Backend) GroupTaskStates(ctx context.Context, groupUUID string, groupTaskCount int) ([]*tasks.TaskState, error) {
+	groupMeta, err := b.getGroupMeta(ctx, groupUUID)
 	if err != nil {
 		return []*tasks.TaskState{}, err
 	}
 
-	return b.getStates(groupMeta.TaskUUIDs...)
+	return b.getStates(ctx, groupMeta.TaskUUIDs...)
 }
 
 // TriggerChord flags chord as triggered in the backend storage to make sure
 // chord is never triggered multiple times. Returns a boolean flag to indicate
 // whether the worker should trigger chord (true) or no if it has been triggered
 // already (false)
-func (b *Backend) TriggerChord(groupUUID string) (bool, error) {
+func (b *Backend) TriggerChord(ctx context.Context, groupUUID string) (bool, error) {
 	query := bson.M{
 		"_id":             groupUUID,
 		"chord_triggered": false,
@@ -97,7 +97,7 @@ func (b *Backend) TriggerChord(groupUUID string) (bool, error) {
 		},
 	}
 
-	_, err := b.groupMetasCollection().UpdateOne(context.Background(), query, change, options.Update())
+	_, err := b.groupMetasCollection(ctx).UpdateOne(ctx, query, change, options.Update())
 
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -110,41 +110,41 @@ func (b *Backend) TriggerChord(groupUUID string) (bool, error) {
 }
 
 // SetStatePending updates task state to PENDING
-func (b *Backend) SetStatePending(signature *tasks.Signature) error {
+func (b *Backend) SetStatePending(ctx context.Context, signature *tasks.Signature) error {
 	update := bson.M{
 		"state":      tasks.StatePending,
 		"task_name":  signature.Name,
 		"created_at": time.Now().UTC(),
 	}
-	return b.updateState(signature, update)
+	return b.updateState(ctx, signature, update)
 }
 
 // SetStateReceived updates task state to RECEIVED
-func (b *Backend) SetStateReceived(signature *tasks.Signature) error {
+func (b *Backend) SetStateReceived(ctx context.Context, signature *tasks.Signature) error {
 	update := bson.M{"state": tasks.StateReceived}
-	return b.updateState(signature, update)
+	return b.updateState(ctx, signature, update)
 }
 
 // SetStateStarted updates task state to STARTED
-func (b *Backend) SetStateStarted(signature *tasks.Signature) error {
+func (b *Backend) SetStateStarted(ctx context.Context, signature *tasks.Signature) error {
 	update := bson.M{"state": tasks.StateStarted}
-	return b.updateState(signature, update)
+	return b.updateState(ctx, signature, update)
 }
 
 // SetStateRetry updates task state to RETRY
-func (b *Backend) SetStateRetry(signature *tasks.Signature) error {
+func (b *Backend) SetStateRetry(ctx context.Context, signature *tasks.Signature) error {
 	update := bson.M{"state": tasks.StateRetry}
-	return b.updateState(signature, update)
+	return b.updateState(ctx, signature, update)
 }
 
 // SetStateSuccess updates task state to SUCCESS
-func (b *Backend) SetStateSuccess(signature *tasks.Signature, results []*tasks.TaskResult) error {
+func (b *Backend) SetStateSuccess(ctx context.Context, signature *tasks.Signature, results []*tasks.TaskResult) error {
 	decodedResults := b.decodeResults(results)
 	update := bson.M{
 		"state":   tasks.StateSuccess,
 		"results": decodedResults,
 	}
-	return b.updateState(signature, update)
+	return b.updateState(ctx, signature, update)
 }
 
 // decodeResults detects & decodes json strings in TaskResult.Value and returns a new slice
@@ -170,15 +170,15 @@ func (b *Backend) decodeResults(results []*tasks.TaskResult) []*tasks.TaskResult
 }
 
 // SetStateFailure updates task state to FAILURE
-func (b *Backend) SetStateFailure(signature *tasks.Signature, err string) error {
+func (b *Backend) SetStateFailure(ctx context.Context, signature *tasks.Signature, err string) error {
 	update := bson.M{"state": tasks.StateFailure, "error": err}
-	return b.updateState(signature, update)
+	return b.updateState(ctx, signature, update)
 }
 
 // GetState returns the latest task state
-func (b *Backend) GetState(taskUUID string) (*tasks.TaskState, error) {
+func (b *Backend) GetState(ctx context.Context, taskUUID string) (*tasks.TaskState, error) {
 	state := &tasks.TaskState{}
-	err := b.tasksCollection().FindOne(context.Background(), bson.M{"_id": taskUUID}).Decode(state)
+	err := b.tasksCollection(ctx).FindOne(ctx, bson.M{"_id": taskUUID}).Decode(state)
 
 	if err != nil {
 		return nil, err
@@ -187,19 +187,19 @@ func (b *Backend) GetState(taskUUID string) (*tasks.TaskState, error) {
 }
 
 // PurgeState deletes stored task state
-func (b *Backend) PurgeState(taskUUID string) error {
-	_, err := b.tasksCollection().DeleteOne(context.Background(), bson.M{"_id": taskUUID})
+func (b *Backend) PurgeState(ctx context.Context, taskUUID string) error {
+	_, err := b.tasksCollection(ctx).DeleteOne(ctx, bson.M{"_id": taskUUID})
 	return err
 }
 
 // PurgeGroupMeta deletes stored group meta data
-func (b *Backend) PurgeGroupMeta(groupUUID string) error {
-	_, err := b.groupMetasCollection().DeleteOne(context.Background(), bson.M{"_id": groupUUID})
+func (b *Backend) PurgeGroupMeta(ctx context.Context, groupUUID string) error {
+	_, err := b.groupMetasCollection(ctx).DeleteOne(ctx, bson.M{"_id": groupUUID})
 	return err
 }
 
 // lockGroupMeta acquires lock on groupUUID document
-func (b *Backend) lockGroupMeta(groupUUID string) error {
+func (b *Backend) lockGroupMeta(ctx context.Context, groupUUID string) error {
 	query := bson.M{
 		"_id":  groupUUID,
 		"lock": false,
@@ -210,24 +210,24 @@ func (b *Backend) lockGroupMeta(groupUUID string) error {
 		},
 	}
 
-	_, err := b.groupMetasCollection().UpdateOne(context.Background(), query, change, options.Update().SetUpsert(true))
+	_, err := b.groupMetasCollection(ctx).UpdateOne(ctx, query, change, options.Update().SetUpsert(true))
 
 	return err
 }
 
 // unlockGroupMeta releases lock on groupUUID document
-func (b *Backend) unlockGroupMeta(groupUUID string) error {
+func (b *Backend) unlockGroupMeta(ctx context.Context, groupUUID string) error {
 	update := bson.M{"$set": bson.M{"lock": false}}
-	_, err := b.groupMetasCollection().UpdateOne(context.Background(), bson.M{"_id": groupUUID}, update, options.Update())
+	_, err := b.groupMetasCollection(ctx).UpdateOne(ctx, bson.M{"_id": groupUUID}, update, options.Update())
 	return err
 }
 
 // getGroupMeta retrieves group meta data, convenience function to avoid repetition
-func (b *Backend) getGroupMeta(groupUUID string) (*tasks.GroupMeta, error) {
+func (b *Backend) getGroupMeta(ctx context.Context, groupUUID string) (*tasks.GroupMeta, error) {
 	groupMeta := &tasks.GroupMeta{}
 	query := bson.M{"_id": groupUUID}
 
-	err := b.groupMetasCollection().FindOne(context.Background(), query).Decode(groupMeta)
+	err := b.groupMetasCollection(ctx).FindOne(ctx, query).Decode(groupMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -235,15 +235,15 @@ func (b *Backend) getGroupMeta(groupUUID string) (*tasks.GroupMeta, error) {
 }
 
 // getStates returns multiple task states
-func (b *Backend) getStates(taskUUIDs ...string) ([]*tasks.TaskState, error) {
+func (b *Backend) getStates(ctx context.Context, taskUUIDs ...string) ([]*tasks.TaskState, error) {
 	states := make([]*tasks.TaskState, 0, len(taskUUIDs))
-	cur, err := b.tasksCollection().Find(context.Background(), bson.M{"_id": bson.M{"$in": taskUUIDs}})
+	cur, err := b.tasksCollection(ctx).Find(ctx, bson.M{"_id": bson.M{"$in": taskUUIDs}})
 	if err != nil {
 		return nil, err
 	}
-	defer cur.Close(context.Background())
+	defer cur.Close(ctx)
 
-	for cur.Next(context.Background()) {
+	for cur.Next(ctx) {
 		state := &tasks.TaskState{}
 		if err := cur.Decode(state); err != nil {
 			return nil, err
@@ -257,23 +257,23 @@ func (b *Backend) getStates(taskUUIDs ...string) ([]*tasks.TaskState, error) {
 }
 
 // updateState saves current task state
-func (b *Backend) updateState(signature *tasks.Signature, update bson.M) error {
+func (b *Backend) updateState(ctx context.Context, signature *tasks.Signature, update bson.M) error {
 	update = bson.M{"$set": update}
-	_, err := b.tasksCollection().UpdateOne(context.Background(), bson.M{"_id": signature.UUID}, update, options.Update().SetUpsert(true))
+	_, err := b.tasksCollection(ctx).UpdateOne(ctx, bson.M{"_id": signature.UUID}, update, options.Update().SetUpsert(true))
 	return err
 }
 
-func (b *Backend) tasksCollection() *mongo.Collection {
+func (b *Backend) tasksCollection(ctx context.Context) *mongo.Collection {
 	b.once.Do(func() {
-		b.connect()
+		b.connect(ctx)
 	})
 
 	return b.tc
 }
 
-func (b *Backend) groupMetasCollection() *mongo.Collection {
+func (b *Backend) groupMetasCollection(ctx context.Context) *mongo.Collection {
 	b.once.Do(func() {
-		b.connect()
+		b.connect(ctx)
 	})
 
 	return b.gmc
@@ -281,8 +281,8 @@ func (b *Backend) groupMetasCollection() *mongo.Collection {
 
 // connect creates the underlying mgo connection if it doesn't exist
 // creates required indexes for our collections
-func (b *Backend) connect() error {
-	client, err := b.dial()
+func (b *Backend) connect(ctx context.Context) error {
+	client, err := b.dial(ctx)
 	if err != nil {
 		return err
 	}
@@ -297,7 +297,7 @@ func (b *Backend) connect() error {
 	b.tc = b.client.Database(database).Collection("tasks")
 	b.gmc = b.client.Database(database).Collection("group_metas")
 
-	err = b.createMongoIndexes(database)
+	err = b.createMongoIndexes(ctx, database)
 	if err != nil {
 		return err
 	}
@@ -306,7 +306,7 @@ func (b *Backend) connect() error {
 
 // dial connects to mongo with TLSConfig if provided
 // else connects via ResultBackend uri
-func (b *Backend) dial() (*mongo.Client, error) {
+func (b *Backend) dial(ctx context.Context) (*mongo.Client, error) {
 
 	if b.GetConfig().MongoDB != nil && b.GetConfig().MongoDB.Client != nil {
 		return b.GetConfig().MongoDB.Client, nil
@@ -323,7 +323,7 @@ func (b *Backend) dial() (*mongo.Client, error) {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	if err := client.Connect(ctx); err != nil {
@@ -334,13 +334,13 @@ func (b *Backend) dial() (*mongo.Client, error) {
 }
 
 // createMongoIndexes ensures all indexes are in place
-func (b *Backend) createMongoIndexes(database string) error {
+func (b *Backend) createMongoIndexes(ctx context.Context, database string) error {
 
 	tasksCollection := b.client.Database(database).Collection("tasks")
 
 	expireIn := int32(b.GetConfig().ResultsExpireIn)
 
-	_, err := tasksCollection.Indexes().CreateMany(context.Background(), []mongo.IndexModel{
+	_, err := tasksCollection.Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{
 			Keys:    bson.M{"state": 1},
 			Options: options.Index().SetBackground(true).SetExpireAfterSeconds(expireIn),

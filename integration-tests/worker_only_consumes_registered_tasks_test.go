@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"reflect"
@@ -32,7 +33,7 @@ func TestWorkerOnlyConsumesRegisteredTaskAMQP(t *testing.T) {
 		},
 	}
 
-	server1, err := machinery.NewServer(&cnf)
+	server1, err := machinery.NewServer(context.TODO(), &cnf)
 	if err != nil {
 		t.Fatal(err, "Could not initialize server")
 	}
@@ -45,7 +46,7 @@ func TestWorkerOnlyConsumesRegisteredTaskAMQP(t *testing.T) {
 		return sum, nil
 	})
 
-	server2, err := machinery.NewServer(&cnf)
+	server2, err := machinery.NewServer(context.TODO(), &cnf)
 	if err != nil {
 		t.Fatal(err, "Could not initialize server")
 	}
@@ -88,8 +89,8 @@ func TestWorkerOnlyConsumesRegisteredTaskAMQP(t *testing.T) {
 
 	worker1 := server1.NewWorker("test_worker", 0)
 	worker2 := server2.NewWorker("test_worker2", 0)
-	go worker1.Launch()
-	go worker2.Launch()
+	go worker1.Launch(context.TODO())
+	go worker2.Launch(context.TODO())
 
 	group, err := tasks.NewGroup(&task2, &task1)
 	if err != nil {
@@ -148,7 +149,7 @@ func TestWorkerOnlyConsumesRegisteredTaskRedis(t *testing.T) {
 		Lock:          fmt.Sprintf("redis://%v", redisURL),
 	}
 
-	server1, err := machinery.NewServer(&cnf)
+	server1, err := machinery.NewServer(context.TODO(), &cnf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ func TestWorkerOnlyConsumesRegisteredTaskRedis(t *testing.T) {
 		return sum, nil
 	})
 
-	server2, err := machinery.NewServer(&cnf)
+	server2, err := machinery.NewServer(context.TODO(), &cnf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,8 +205,8 @@ func TestWorkerOnlyConsumesRegisteredTaskRedis(t *testing.T) {
 
 	worker1 := server1.NewWorker("test_worker", 0)
 	worker2 := server2.NewWorker("test_worker2", 0)
-	go worker1.Launch()
-	go worker2.Launch()
+	go worker1.Launch(context.TODO())
+	go worker2.Launch(context.TODO())
 
 	group, err := tasks.NewGroup(&task2, &task1)
 	if err != nil {

@@ -1,6 +1,7 @@
 package common
 
 import (
+	"context"
 	"errors"
 	"sync"
 
@@ -86,7 +87,7 @@ func (b *Broker) IsTaskRegistered(name string) bool {
 }
 
 // GetPendingTasks returns a slice of task.Signatures waiting in the queue
-func (b *Broker) GetPendingTasks(queue string) ([]*tasks.Signature, error) {
+func (b *Broker) GetPendingTasks(ctx context.Context, queue string) ([]*tasks.Signature, error) {
 	return nil, errors.New("Not implemented")
 }
 

@@ -54,14 +54,14 @@ func NewServerWithBrokerBackendLock(cnf *config.Config, brokerServer brokersifac
 }
 
 // NewServer creates Server instance
-func NewServer(cnf *config.Config) (*Server, error) {
+func NewServer(ctx context.Context, cnf *config.Config) (*Server, error) {
 	broker, err := BrokerFactory(cnf)
 	if err != nil {
 		return nil, err
 	}
 
 	// Backend is optional so we ignore the error
-	backend, _ := BackendFactory(cnf)
+	backend, _ := BackendFactory(ctx, cnf)
 
 	// Init lock
 	lock, err := LockFactory(cnf)
@@ -197,7 +197,7 @@ func (server *Server) SendTaskWithContext(ctx context.Context, signature *tasks.
 	}
 
 	// Set initial task state to PENDING
-	if err := server.backend.SetStatePending(signature); err != nil {
+	if err := server.backend.SetStatePending(ctx, signature); err != nil {
 		return nil, fmt.Errorf("Set state pending error: %s", err)
 	}
 
@@ -256,11 +256,11 @@ func (server *Server) SendGroupWithContext(ctx context.Context, group *tasks.Gro
 	errorsChan := make(chan error, len(group.Tasks)*2)
 
 	// Init group
-	server.backend.InitGroup(group.GroupUUID, group.GetUUIDs())
+	server.backend.InitGroup(ctx, group.GroupUUID, group.GetUUIDs())
 
 	// Init the tasks Pending state first
 	for _, signature := range group.Tasks {
-		if err := server.backend.SetStatePending(signature); err != nil {
+		if err := server.backend.SetStatePending(ctx, signature); err != nil {
 			errorsChan <- err
 			continue
 		}

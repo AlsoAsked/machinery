@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
@@ -36,6 +37,6 @@ func TestAmqpMongodb(t *testing.T) {
 
 	worker := server.(*machinery.Server).NewWorker("test_worker", 0)
 	defer worker.Quit()
-	go worker.Launch()
+	go worker.Launch(context.TODO())
 	testAll(server, t)
 }

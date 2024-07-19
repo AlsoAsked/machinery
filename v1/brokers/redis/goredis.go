@@ -49,9 +49,9 @@ func NewGR(cnf *config.Config, addrs []string, db int) iface.Broker {
 	}
 
 	ropt := &redis.UniversalOptions{
-		Addrs:    addrs,
-		DB:       db,
-		Password: password,
+		Addrs:     addrs,
+		DB:        db,
+		Password:  password,
 		TLSConfig: cnf.TLSConfig,
 	}
 	if cnf.Redis != nil {
@@ -73,7 +73,7 @@ func NewGR(cnf *config.Config, addrs []string, db int) iface.Broker {
 }
 
 // StartConsuming enters a loop and waits for incoming messages
-func (b *BrokerGR) StartConsuming(consumerTag string, concurrency int, taskProcessor iface.TaskProcessor) (bool, error) {
+func (b *BrokerGR) StartConsuming(ctx context.Context, consumerTag string, concurrency int, taskProcessor iface.TaskProcessor) (bool, error) {
 	b.consumingWG.Add(1)
 	defer b.consumingWG.Done()
 
@@ -163,7 +163,7 @@ func (b *BrokerGR) StartConsuming(consumerTag string, concurrency int, taskProce
 		}
 	}()
 
-	if err := b.consume(deliveries, concurrency, taskProcessor); err != nil {
+	if err := b.consume(ctx, deliveries, concurrency, taskProcessor); err != nil {
 		return b.GetRetry(), err
 	}
 
@@ -211,12 +211,12 @@ func (b *BrokerGR) Publish(ctx context.Context, signature *tasks.Signature) erro
 }
 
 // GetPendingTasks returns a slice of task signatures waiting in the queue
-func (b *BrokerGR) GetPendingTasks(queue string) ([]*tasks.Signature, error) {
+func (b *BrokerGR) GetPendingTasks(ctx context.Context, queue string) ([]*tasks.Signature, error) {
 
 	if queue == "" {
 		queue = b.GetConfig().DefaultQueue
 	}
-	results, err := b.rclient.LRange(context.Background(), queue, 0, -1).Result()
+	results, err := b.rclient.LRange(ctx, queue, 0, -1).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +256,7 @@ func (b *BrokerGR) GetDelayedTasks() ([]*tasks.Signature, error) {
 
 // consume takes delivered messages from the channel and manages a worker pool
 // to process tasks concurrently
-func (b *BrokerGR) consume(deliveries <-chan []byte, concurrency int, taskProcessor iface.TaskProcessor) error {
+func (b *BrokerGR) consume(ctx context.Context, deliveries <-chan []byte, concurrency int, taskProcessor iface.TaskProcessor) error {
 	errorsChan := make(chan error, concurrency*2)
 	pool := make(chan struct{}, concurrency)
 
@@ -285,7 +285,7 @@ func (b *BrokerGR) consume(deliveries <-chan []byte, concurrency int, taskProces
 			// Consume the task inside a goroutine so multiple tasks
 			// can be processed concurrently
 			go func() {
-				if err := b.consumeOne(d, taskProcessor); err != nil {
+				if err := b.consumeOne(ctx, d, taskProcessor); err != nil {
 					errorsChan <- err
 				}
 
@@ -301,7 +301,7 @@ func (b *BrokerGR) consume(deliveries <-chan []byte, concurrency int, taskProces
 }
 
 // consumeOne processes a single message using TaskProcessor
-func (b *BrokerGR) consumeOne(delivery []byte, taskProcessor iface.TaskProcessor) error {
+func (b *BrokerGR) consumeOne(ctx context.Context, delivery []byte, taskProcessor iface.TaskProcessor) error {
 	signature := new(tasks.Signature)
 	decoder := json.NewDecoder(bytes.NewReader(delivery))
 	decoder.UseNumber()
@@ -323,7 +323,7 @@ func (b *BrokerGR) consumeOne(delivery []byte, taskProcessor iface.TaskProcessor
 
 	log.DEBUG.Printf("Received new message: %s", delivery)
 
-	return taskProcessor.Process(signature)
+	return taskProcessor.Process(ctx, signature)
 }
 
 // nextTask pops next available task from the default queue

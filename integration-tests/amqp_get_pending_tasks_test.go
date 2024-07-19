@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
@@ -60,7 +61,7 @@ func TestAmqpGetPendingTasks(t *testing.T) {
 		}
 		results = append(results, ar)
 	}
-	pendingMessages, err := server.GetBroker().GetPendingTasks(server.GetConfig().DefaultQueue)
+	pendingMessages, err := server.GetBroker().GetPendingTasks(context.TODO(), server.GetConfig().DefaultQueue)
 	if err != nil {
 		t.Error(err)
 	}
@@ -77,13 +78,13 @@ func TestAmqpGetPendingTasks(t *testing.T) {
 	}
 
 	worker := server.(*machinery.Server).NewWorker("test_worker", 0)
-	go worker.Launch()
+	go worker.Launch(context.TODO())
 	defer worker.Quit()
 	for _, r := range results {
 		r.Get(time.Duration(time.Millisecond * 5))
 	}
 
-	pendingMessages, err = server.GetBroker().GetPendingTasks(server.GetConfig().DefaultQueue)
+	pendingMessages, err = server.GetBroker().GetPendingTasks(context.TODO(), server.GetConfig().DefaultQueue)
 	if err != nil {
 		t.Error(err)
 	}

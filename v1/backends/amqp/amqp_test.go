@@ -1,6 +1,7 @@
 package amqp_test
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -74,33 +75,33 @@ func TestGroupCompleted(t *testing.T) {
 	backend := amqp.New(amqpConfig)
 
 	// Cleanup before the test
-	backend.PurgeState(task1.UUID)
-	backend.PurgeState(task2.UUID)
-	backend.PurgeGroupMeta(groupUUID)
+	backend.PurgeState(context.TODO(), task1.UUID)
+	backend.PurgeState(context.TODO(), task2.UUID)
+	backend.PurgeGroupMeta(context.TODO(), groupUUID)
 
-	groupCompleted, err := backend.GroupCompleted(groupUUID, groupTaskCount)
+	groupCompleted, err := backend.GroupCompleted(context.TODO(), groupUUID, groupTaskCount)
 	if assert.NoError(t, err) {
 		assert.False(t, groupCompleted)
 	}
 
-	backend.InitGroup(groupUUID, []string{task1.UUID, task2.UUID})
+	backend.InitGroup(context.TODO(), groupUUID, []string{task1.UUID, task2.UUID})
 
-	groupCompleted, err = backend.GroupCompleted(groupUUID, groupTaskCount)
+	groupCompleted, err = backend.GroupCompleted(context.TODO(), groupUUID, groupTaskCount)
 	if assert.NoError(t, err) {
 		assert.False(t, groupCompleted)
 	}
 
-	backend.SetStatePending(task1)
-	backend.SetStateStarted(task2)
-	groupCompleted, err = backend.GroupCompleted(groupUUID, groupTaskCount)
+	backend.SetStatePending(context.TODO(), task1)
+	backend.SetStateStarted(context.TODO(), task2)
+	groupCompleted, err = backend.GroupCompleted(context.TODO(), groupUUID, groupTaskCount)
 	if assert.NoError(t, err) {
 		assert.False(t, groupCompleted)
 	}
 
 	taskResults := []*tasks.TaskResult{new(tasks.TaskResult)}
-	backend.SetStateSuccess(task1, taskResults)
-	backend.SetStateSuccess(task2, taskResults)
-	groupCompleted, err = backend.GroupCompleted(groupUUID, groupTaskCount)
+	backend.SetStateSuccess(context.TODO(), task1, taskResults)
+	backend.SetStateSuccess(context.TODO(), task2, taskResults)
+	groupCompleted, err = backend.GroupCompleted(context.TODO(), groupUUID, groupTaskCount)
 	if assert.NoError(t, err) {
 		assert.True(t, groupCompleted)
 	}
@@ -118,11 +119,11 @@ func TestGetState(t *testing.T) {
 
 	go func() {
 		backend := amqp.New(amqpConfig)
-		backend.SetStatePending(signature)
+		backend.SetStatePending(context.TODO(), signature)
 		time.Sleep(2 * time.Millisecond)
-		backend.SetStateReceived(signature)
+		backend.SetStateReceived(context.TODO(), signature)
 		time.Sleep(2 * time.Millisecond)
-		backend.SetStateStarted(signature)
+		backend.SetStateStarted(context.TODO(), signature)
 		time.Sleep(2 * time.Millisecond)
 
 		taskResults := []*tasks.TaskResult{
@@ -131,7 +132,7 @@ func TestGetState(t *testing.T) {
 				Value: 2,
 			},
 		}
-		backend.SetStateSuccess(signature, taskResults)
+		backend.SetStateSuccess(context.TODO(), signature, taskResults)
 	}()
 
 	backend := amqp.New(amqpConfig)
@@ -141,7 +142,7 @@ func TestGetState(t *testing.T) {
 		err       error
 	)
 	for {
-		taskState, err = backend.GetState(signature.UUID)
+		taskState, err = backend.GetState(context.TODO(), signature.UUID)
 		if taskState == nil {
 			assert.Equal(t, "No state ready", err.Error())
 			continue
@@ -166,14 +167,14 @@ func TestPurgeState(t *testing.T) {
 
 	backend := amqp.New(amqpConfig)
 
-	backend.SetStatePending(signature)
-	backend.SetStateReceived(signature)
-	taskState, err := backend.GetState(signature.UUID)
+	backend.SetStatePending(context.TODO(), signature)
+	backend.SetStateReceived(context.TODO(), signature)
+	taskState, err := backend.GetState(context.TODO(), signature.UUID)
 	assert.NotNil(t, taskState)
 	assert.NoError(t, err)
 
-	backend.PurgeState(taskState.TaskUUID)
-	taskState, err = backend.GetState(signature.UUID)
+	backend.PurgeState(context.TODO(), taskState.TaskUUID)
+	taskState, err = backend.GetState(context.TODO(), signature.UUID)
 	assert.Nil(t, taskState)
 	assert.Error(t, err)
 }

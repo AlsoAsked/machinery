@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -31,7 +32,7 @@ func (s *EagerIntegrationTestSuite) SetupSuite() {
 		ResultBackend: "eager",
 		Lock:          "eager",
 	}
-	s.srv, err = machinery.NewServer(&cnf)
+	s.srv, err = machinery.NewServer(context.TODO(), &cnf)
 	s.Nil(err)
 	s.NotNil(s.srv)
 

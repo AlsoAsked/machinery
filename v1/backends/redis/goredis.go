@@ -64,7 +64,7 @@ func NewGR(cnf *config.Config, addrs []string, db int) iface.Backend {
 }
 
 // InitGroup creates and saves a group meta data object
-func (b *BackendGR) InitGroup(groupUUID string, taskUUIDs []string) error {
+func (b *BackendGR) InitGroup(ctx context.Context, groupUUID string, taskUUIDs []string) error {
 	groupMeta := &tasks.GroupMeta{
 		GroupUUID: groupUUID,
 		TaskUUIDs: taskUUIDs,
@@ -77,7 +77,7 @@ func (b *BackendGR) InitGroup(groupUUID string, taskUUIDs []string) error {
 	}
 
 	expiration := b.getExpiration()
-	err = b.rclient.Set(context.Background(), groupUUID, encoded, expiration).Err()
+	err = b.rclient.Set(ctx, groupUUID, encoded, expiration).Err()
 	if err != nil {
 		return err
 	}
@@ -86,13 +86,13 @@ func (b *BackendGR) InitGroup(groupUUID string, taskUUIDs []string) error {
 }
 
 // GroupCompleted returns true if all tasks in a group finished
-func (b *BackendGR) GroupCompleted(groupUUID string, groupTaskCount int) (bool, error) {
-	groupMeta, err := b.getGroupMeta(groupUUID)
+func (b *BackendGR) GroupCompleted(ctx context.Context, groupUUID string, groupTaskCount int) (bool, error) {
+	groupMeta, err := b.getGroupMeta(ctx, groupUUID)
 	if err != nil {
 		return false, err
 	}
 
-	taskStates, err := b.getStates(groupMeta.TaskUUIDs...)
+	taskStates, err := b.getStates(ctx, groupMeta.TaskUUIDs...)
 	if err != nil {
 		return false, err
 	}
@@ -108,27 +108,27 @@ func (b *BackendGR) GroupCompleted(groupUUID string, groupTaskCount int) (bool, 
 }
 
 // GroupTaskStates returns states of all tasks in the group
-func (b *BackendGR) GroupTaskStates(groupUUID string, groupTaskCount int) ([]*tasks.TaskState, error) {
-	groupMeta, err := b.getGroupMeta(groupUUID)
+func (b *BackendGR) GroupTaskStates(ctx context.Context, groupUUID string, groupTaskCount int) ([]*tasks.TaskState, error) {
+	groupMeta, err := b.getGroupMeta(ctx, groupUUID)
 	if err != nil {
 		return []*tasks.TaskState{}, err
 	}
 
-	return b.getStates(groupMeta.TaskUUIDs...)
+	return b.getStates(ctx, groupMeta.TaskUUIDs...)
 }
 
 // TriggerChord flags chord as triggered in the backend storage to make sure
 // chord is never trigerred multiple times. Returns a boolean flag to indicate
 // whether the worker should trigger chord (true) or no if it has been triggered
 // already (false)
-func (b *BackendGR) TriggerChord(groupUUID string) (bool, error) {
+func (b *BackendGR) TriggerChord(ctx context.Context, groupUUID string) (bool, error) {
 	m := b.redsync.NewMutex("TriggerChordMutex")
 	if err := m.Lock(); err != nil {
 		return false, err
 	}
 	defer m.Unlock()
 
-	groupMeta, err := b.getGroupMeta(groupUUID)
+	groupMeta, err := b.getGroupMeta(ctx, groupUUID)
 	if err != nil {
 		return false, err
 	}
@@ -148,7 +148,7 @@ func (b *BackendGR) TriggerChord(groupUUID string) (bool, error) {
 	}
 
 	expiration := b.getExpiration()
-	err = b.rclient.Set(context.Background(), groupUUID, encoded, expiration).Err()
+	err = b.rclient.Set(ctx, groupUUID, encoded, expiration).Err()
 	if err != nil {
 		return false, err
 	}
@@ -156,8 +156,8 @@ func (b *BackendGR) TriggerChord(groupUUID string) (bool, error) {
 	return true, nil
 }
 
-func (b *BackendGR) mergeNewTaskState(newState *tasks.TaskState) {
-	state, err := b.GetState(newState.TaskUUID)
+func (b *BackendGR) mergeNewTaskState(ctx context.Context, newState *tasks.TaskState) {
+	state, err := b.GetState(ctx, newState.TaskUUID)
 	if err == nil {
 		newState.CreatedAt = state.CreatedAt
 		newState.TaskName = state.TaskName
@@ -165,50 +165,50 @@ func (b *BackendGR) mergeNewTaskState(newState *tasks.TaskState) {
 }
 
 // SetStatePending updates task state to PENDING
-func (b *BackendGR) SetStatePending(signature *tasks.Signature) error {
+func (b *BackendGR) SetStatePending(ctx context.Context, signature *tasks.Signature) error {
 	taskState := tasks.NewPendingTaskState(signature)
-	return b.updateState(taskState)
+	return b.updateState(ctx, taskState)
 }
 
 // SetStateReceived updates task state to RECEIVED
-func (b *BackendGR) SetStateReceived(signature *tasks.Signature) error {
+func (b *BackendGR) SetStateReceived(ctx context.Context, signature *tasks.Signature) error {
 	taskState := tasks.NewReceivedTaskState(signature)
-	b.mergeNewTaskState(taskState)
-	return b.updateState(taskState)
+	b.mergeNewTaskState(ctx, taskState)
+	return b.updateState(ctx, taskState)
 }
 
 // SetStateStarted updates task state to STARTED
-func (b *BackendGR) SetStateStarted(signature *tasks.Signature) error {
+func (b *BackendGR) SetStateStarted(ctx context.Context, signature *tasks.Signature) error {
 	taskState := tasks.NewStartedTaskState(signature)
-	b.mergeNewTaskState(taskState)
-	return b.updateState(taskState)
+	b.mergeNewTaskState(ctx, taskState)
+	return b.updateState(ctx, taskState)
 }
 
 // SetStateRetry updates task state to RETRY
-func (b *BackendGR) SetStateRetry(signature *tasks.Signature) error {
+func (b *BackendGR) SetStateRetry(ctx context.Context, signature *tasks.Signature) error {
 	taskState := tasks.NewRetryTaskState(signature)
-	b.mergeNewTaskState(taskState)
-	return b.updateState(taskState)
+	b.mergeNewTaskState(ctx, taskState)
+	return b.updateState(ctx, taskState)
 }
 
 // SetStateSuccess updates task state to SUCCESS
-func (b *BackendGR) SetStateSuccess(signature *tasks.Signature, results []*tasks.TaskResult) error {
+func (b *BackendGR) SetStateSuccess(ctx context.Context, signature *tasks.Signature, results []*tasks.TaskResult) error {
 	taskState := tasks.NewSuccessTaskState(signature, results)
-	b.mergeNewTaskState(taskState)
-	return b.updateState(taskState)
+	b.mergeNewTaskState(ctx, taskState)
+	return b.updateState(ctx, taskState)
 }
 
 // SetStateFailure updates task state to FAILURE
-func (b *BackendGR) SetStateFailure(signature *tasks.Signature, err string) error {
+func (b *BackendGR) SetStateFailure(ctx context.Context, signature *tasks.Signature, err string) error {
 	taskState := tasks.NewFailureTaskState(signature, err)
-	b.mergeNewTaskState(taskState)
-	return b.updateState(taskState)
+	b.mergeNewTaskState(ctx, taskState)
+	return b.updateState(ctx, taskState)
 }
 
 // GetState returns the latest task state
-func (b *BackendGR) GetState(taskUUID string) (*tasks.TaskState, error) {
+func (b *BackendGR) GetState(ctx context.Context, taskUUID string) (*tasks.TaskState, error) {
 
-	item, err := b.rclient.Get(context.Background(), taskUUID).Bytes()
+	item, err := b.rclient.Get(ctx, taskUUID).Bytes()
 	if err != nil {
 		return nil, err
 	}
@@ -223,8 +223,8 @@ func (b *BackendGR) GetState(taskUUID string) (*tasks.TaskState, error) {
 }
 
 // PurgeState deletes stored task state
-func (b *BackendGR) PurgeState(taskUUID string) error {
-	err := b.rclient.Del(context.Background(), taskUUID).Err()
+func (b *BackendGR) PurgeState(ctx context.Context, taskUUID string) error {
+	err := b.rclient.Del(ctx, taskUUID).Err()
 	if err != nil {
 		return err
 	}
@@ -233,8 +233,8 @@ func (b *BackendGR) PurgeState(taskUUID string) error {
 }
 
 // PurgeGroupMeta deletes stored group meta data
-func (b *BackendGR) PurgeGroupMeta(groupUUID string) error {
-	err := b.rclient.Del(context.Background(), groupUUID).Err()
+func (b *BackendGR) PurgeGroupMeta(ctx context.Context, groupUUID string) error {
+	err := b.rclient.Del(ctx, groupUUID).Err()
 	if err != nil {
 		return err
 	}
@@ -243,8 +243,8 @@ func (b *BackendGR) PurgeGroupMeta(groupUUID string) error {
 }
 
 // getGroupMeta retrieves group meta data, convenience function to avoid repetition
-func (b *BackendGR) getGroupMeta(groupUUID string) (*tasks.GroupMeta, error) {
-	item, err := b.rclient.Get(context.Background(), groupUUID).Bytes()
+func (b *BackendGR) getGroupMeta(ctx context.Context, groupUUID string) (*tasks.GroupMeta, error) {
+	item, err := b.rclient.Get(ctx, groupUUID).Bytes()
 	if err != nil {
 		return nil, err
 	}
@@ -260,12 +260,12 @@ func (b *BackendGR) getGroupMeta(groupUUID string) (*tasks.GroupMeta, error) {
 }
 
 // getStates returns multiple task states
-func (b *BackendGR) getStates(taskUUIDs ...string) ([]*tasks.TaskState, error) {
+func (b *BackendGR) getStates(ctx context.Context, taskUUIDs ...string) ([]*tasks.TaskState, error) {
 	taskStates := make([]*tasks.TaskState, len(taskUUIDs))
 	// to avoid CROSSSLOT error, use pipeline
-	cmders, err := b.rclient.Pipelined(context.Background(), func(pipeliner redis.Pipeliner) error {
+	cmders, err := b.rclient.Pipelined(ctx, func(pipeliner redis.Pipeliner) error {
 		for _, uuid := range taskUUIDs {
-			pipeliner.Get(context.Background(), uuid)
+			pipeliner.Get(ctx, uuid)
 		}
 		return nil
 	})
@@ -291,14 +291,14 @@ func (b *BackendGR) getStates(taskUUIDs ...string) ([]*tasks.TaskState, error) {
 }
 
 // updateState saves current task state
-func (b *BackendGR) updateState(taskState *tasks.TaskState) error {
+func (b *BackendGR) updateState(ctx context.Context, taskState *tasks.TaskState) error {
 	encoded, err := json.Marshal(taskState)
 	if err != nil {
 		return err
 	}
 
 	expiration := b.getExpiration()
-	_, err = b.rclient.Set(context.Background(), taskState.TaskUUID, encoded, expiration).Result()
+	_, err = b.rclient.Set(ctx, taskState.TaskUUID, encoded, expiration).Result()
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package result
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"time"
@@ -80,7 +81,7 @@ func (asyncResult *AsyncResult) Touch() ([]reflect.Value, error) {
 
 	// Purge state if we are using AMQP backend
 	if asyncResult.backend.IsAMQP() && asyncResult.taskState.IsCompleted() {
-		asyncResult.backend.PurgeState(asyncResult.taskState.TaskUUID)
+		asyncResult.backend.PurgeState(context.TODO(), asyncResult.taskState.TaskUUID)
 	}
 
 	if asyncResult.taskState.IsFailure() {
@@ -133,7 +134,7 @@ func (asyncResult *AsyncResult) GetState() *tasks.TaskState {
 		return asyncResult.taskState
 	}
 
-	taskState, err := asyncResult.backend.GetState(asyncResult.Signature.UUID)
+	taskState, err := asyncResult.backend.GetState(context.TODO(), asyncResult.Signature.UUID)
 	if err == nil {
 		asyncResult.taskState = taskState
 	}

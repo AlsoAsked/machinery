@@ -2,6 +2,7 @@ package memcache
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"time"
 
@@ -30,7 +31,7 @@ func New(cnf *config.Config, servers []string) iface.Backend {
 }
 
 // InitGroup creates and saves a group meta data object
-func (b *Backend) InitGroup(groupUUID string, taskUUIDs []string) error {
+func (b *Backend) InitGroup(ctx context.Context, groupUUID string, taskUUIDs []string) error {
 	groupMeta := &tasks.GroupMeta{
 		GroupUUID: groupUUID,
 		TaskUUIDs: taskUUIDs,
@@ -50,7 +51,7 @@ func (b *Backend) InitGroup(groupUUID string, taskUUIDs []string) error {
 }
 
 // GroupCompleted returns true if all tasks in a group finished
-func (b *Backend) GroupCompleted(groupUUID string, groupTaskCount int) (bool, error) {
+func (b *Backend) GroupCompleted(ctx context.Context, groupUUID string, groupTaskCount int) (bool, error) {
 	groupMeta, err := b.getGroupMeta(groupUUID)
 	if err != nil {
 		return false, err
@@ -72,7 +73,7 @@ func (b *Backend) GroupCompleted(groupUUID string, groupTaskCount int) (bool, er
 }
 
 // GroupTaskStates returns states of all tasks in the group
-func (b *Backend) GroupTaskStates(groupUUID string, groupTaskCount int) ([]*tasks.TaskState, error) {
+func (b *Backend) GroupTaskStates(ctx context.Context, groupUUID string, groupTaskCount int) ([]*tasks.TaskState, error) {
 	groupMeta, err := b.getGroupMeta(groupUUID)
 	if err != nil {
 		return []*tasks.TaskState{}, err
@@ -85,7 +86,7 @@ func (b *Backend) GroupTaskStates(groupUUID string, groupTaskCount int) ([]*task
 // chord is never trigerred multiple times. Returns a boolean flag to indicate
 // whether the worker should trigger chord (true) or no if it has been triggered
 // already (false)
-func (b *Backend) TriggerChord(groupUUID string) (bool, error) {
+func (b *Backend) TriggerChord(ctx context.Context, groupUUID string) (bool, error) {
 	groupMeta, err := b.getGroupMeta(groupUUID)
 	if err != nil {
 		return false, err
@@ -127,43 +128,43 @@ func (b *Backend) TriggerChord(groupUUID string) (bool, error) {
 }
 
 // SetStatePending updates task state to PENDING
-func (b *Backend) SetStatePending(signature *tasks.Signature) error {
+func (b *Backend) SetStatePending(ctx context.Context, signature *tasks.Signature) error {
 	taskState := tasks.NewPendingTaskState(signature)
 	return b.updateState(taskState)
 }
 
 // SetStateReceived updates task state to RECEIVED
-func (b *Backend) SetStateReceived(signature *tasks.Signature) error {
+func (b *Backend) SetStateReceived(ctx context.Context, signature *tasks.Signature) error {
 	taskState := tasks.NewReceivedTaskState(signature)
 	return b.updateState(taskState)
 }
 
 // SetStateStarted updates task state to STARTED
-func (b *Backend) SetStateStarted(signature *tasks.Signature) error {
+func (b *Backend) SetStateStarted(ctx context.Context, signature *tasks.Signature) error {
 	taskState := tasks.NewStartedTaskState(signature)
 	return b.updateState(taskState)
 }
 
 // SetStateRetry updates task state to RETRY
-func (b *Backend) SetStateRetry(signature *tasks.Signature) error {
+func (b *Backend) SetStateRetry(ctx context.Context, signature *tasks.Signature) error {
 	state := tasks.NewRetryTaskState(signature)
 	return b.updateState(state)
 }
 
 // SetStateSuccess updates task state to SUCCESS
-func (b *Backend) SetStateSuccess(signature *tasks.Signature, results []*tasks.TaskResult) error {
+func (b *Backend) SetStateSuccess(ctx context.Context, signature *tasks.Signature, results []*tasks.TaskResult) error {
 	taskState := tasks.NewSuccessTaskState(signature, results)
 	return b.updateState(taskState)
 }
 
 // SetStateFailure updates task state to FAILURE
-func (b *Backend) SetStateFailure(signature *tasks.Signature, err string) error {
+func (b *Backend) SetStateFailure(ctx context.Context, signature *tasks.Signature, err string) error {
 	taskState := tasks.NewFailureTaskState(signature, err)
 	return b.updateState(taskState)
 }
 
 // GetState returns the latest task state
-func (b *Backend) GetState(taskUUID string) (*tasks.TaskState, error) {
+func (b *Backend) GetState(ctx context.Context, taskUUID string) (*tasks.TaskState, error) {
 	item, err := b.getClient().Get(taskUUID)
 	if err != nil {
 		return nil, err
@@ -180,12 +181,12 @@ func (b *Backend) GetState(taskUUID string) (*tasks.TaskState, error) {
 }
 
 // PurgeState deletes stored task state
-func (b *Backend) PurgeState(taskUUID string) error {
+func (b *Backend) PurgeState(ctx context.Context, taskUUID string) error {
 	return b.getClient().Delete(taskUUID)
 }
 
 // PurgeGroupMeta deletes stored group meta data
-func (b *Backend) PurgeGroupMeta(groupUUID string) error {
+func (b *Backend) PurgeGroupMeta(ctx context.Context, groupUUID string) error {
 	return b.getClient().Delete(groupUUID)
 }
 

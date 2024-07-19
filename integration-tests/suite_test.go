@@ -392,7 +392,7 @@ func registerTestTasks(server Server) {
 
 func testSetup(cnf *config.Config) Server {
 
-	server, err := machinery.NewServer(cnf)
+	server, err := machinery.NewServer(context.TODO(), cnf)
 	if err != nil {
 		log.Fatal(err, "Could not initialize server")
 	}

@@ -1,6 +1,7 @@
 package machinery_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -15,7 +16,7 @@ import (
 	amqpbroker "github.com/RichardKnop/machinery/v1/brokers/amqp"
 	brokeriface "github.com/RichardKnop/machinery/v1/brokers/iface"
 	redisbroker "github.com/RichardKnop/machinery/v1/brokers/redis"
-	sqsbrokerv2 "github.com/RichardKnop/machinery/v1/brokers/sqsv2"
+	sqsbroker "github.com/RichardKnop/machinery/v1/brokers/sqs"
 
 	amqpbackend "github.com/RichardKnop/machinery/v1/backends/amqp"
 	memcachebackend "github.com/RichardKnop/machinery/v1/backends/memcache"
@@ -218,7 +219,7 @@ func TestBrokerFactory(t *testing.T) {
 
 	actual, err = machinery.BrokerFactory(&cnf)
 	if assert.NoError(t, err) {
-		_, isAWSSQSBroker := actual.(*sqsbrokerv2.Broker)
+		_, isAWSSQSBroker := actual.(*sqsbroker.Broker)
 		assert.True(
 			t,
 			isAWSSQSBroker,
@@ -236,7 +237,7 @@ func TestBrokerFactory(t *testing.T) {
 	os.Setenv("DISABLE_STRICT_SQS_CHECK", "yes")
 	actual, err = machinery.BrokerFactory(&cnf)
 	if assert.NoError(t, err) {
-		_, isAWSSQSBroker := actual.(*sqsbrokerv2.Broker)
+		_, isAWSSQSBroker := actual.(*sqsbroker.Broker)
 		assert.True(
 			t,
 			isAWSSQSBroker,
@@ -327,7 +328,7 @@ func TestBackendFactory(t *testing.T) {
 
 	cnf = config.Config{ResultBackend: "amqp://guest:guest@localhost:5672/"}
 
-	actual, err := machinery.BackendFactory(&cnf)
+	actual, err := machinery.BackendFactory(context.TODO(), &cnf)
 	if assert.NoError(t, err) {
 		expected := amqpbackend.New(&cnf)
 		assert.True(
@@ -343,7 +344,7 @@ func TestBackendFactory(t *testing.T) {
 		ResultBackend: "memcache://10.0.0.1:11211,10.0.0.2:11211",
 	}
 
-	actual, err = machinery.BackendFactory(&cnf)
+	actual, err = machinery.BackendFactory(context.TODO(), &cnf)
 	if assert.NoError(t, err) {
 		servers := []string{"10.0.0.1:11211", "10.0.0.2:11211"}
 		expected := memcachebackend.New(&cnf, servers)
@@ -361,7 +362,7 @@ func TestBackendFactory(t *testing.T) {
 		ResultBackend: "redis://password@localhost:6379",
 	}
 
-	actual, err = machinery.BackendFactory(&cnf)
+	actual, err = machinery.BackendFactory(context.TODO(), &cnf)
 	if assert.NoError(t, err) {
 		expected := redisbackend.New(&cnf, "localhost:6379", "password", "", 0)
 		assert.True(
@@ -376,7 +377,7 @@ func TestBackendFactory(t *testing.T) {
 		ResultBackend: "redis://localhost:6379",
 	}
 
-	actual, err = machinery.BackendFactory(&cnf)
+	actual, err = machinery.BackendFactory(context.TODO(), &cnf)
 	if assert.NoError(t, err) {
 		expected := redisbackend.New(&cnf, "localhost:6379", "", "", 0)
 		assert.True(
@@ -391,7 +392,7 @@ func TestBackendFactory(t *testing.T) {
 		ResultBackend: "redis+socket:///tmp/redis.sock",
 	}
 
-	actual, err = machinery.BackendFactory(&cnf)
+	actual, err = machinery.BackendFactory(context.TODO(), &cnf)
 	if assert.NoError(t, err) {
 		expected := redisbackend.New(&cnf, "", "", "/tmp/redis.sock", 0)
 		assert.True(
@@ -407,7 +408,7 @@ func TestBackendFactory(t *testing.T) {
 		ResultsExpireIn: 30,
 	}
 
-	actual, err = machinery.BackendFactory(&cnf)
+	actual, err = machinery.BackendFactory(context.TODO(), &cnf)
 	if assert.NoError(t, err) {
 		expected, err := mongobackend.New(&cnf)
 		if assert.NoError(t, err) {
@@ -427,7 +428,7 @@ func TestBackendFactoryError(t *testing.T) {
 		ResultBackend: "BOGUS",
 	}
 
-	conn, err := machinery.BackendFactory(&cnf)
+	conn, err := machinery.BackendFactory(context.TODO(), &cnf)
 	if assert.Error(t, err) {
 		assert.Nil(t, conn)
 		assert.Equal(t, "Factory failed with result backend: BOGUS", err.Error())

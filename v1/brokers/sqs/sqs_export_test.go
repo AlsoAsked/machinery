@@ -1,4 +1,4 @@
-package sqsv2
+package sqs
 
 import (
 	"context"
@@ -25,7 +25,7 @@ var (
 )
 
 type FakeSQS struct {
-	SQSAPIV2
+	SQSAPI
 }
 
 func (f *FakeSQS) SendMessage(_ context.Context, _ *awssqs.SendMessageInput, _ ...func(*awssqs.Options)) (*awssqs.SendMessageOutput, error) {
@@ -46,7 +46,7 @@ func (f *FakeSQS) DeleteMessage(_ context.Context, _ *awssqs.DeleteMessageInput,
 }
 
 type ErrorSQS struct {
-	SQSAPIV2
+	SQSAPI
 }
 
 func (f *ErrorSQS) SendMessage(_ context.Context, _ *awssqs.SendMessageInput, _ ...func(*awssqs.Options)) (*awssqs.SendMessageOutput, error) {
@@ -125,16 +125,16 @@ func init() {
 	}
 }
 
-func (b *Broker) ConsumeForTest(deliveries <-chan *ReceivedMessages, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}) error {
-	return b.consume(deliveries, concurrency, taskProcessor, pool)
+func (b *Broker) ConsumeForTest(ctx context.Context, deliveries <-chan *ReceivedMessages, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}) error {
+	return b.consume(ctx, deliveries, concurrency, taskProcessor, pool)
 }
 
-func (b *Broker) ConsumeOneForTest(delivery *ReceivedMessages, taskProcessor iface.TaskProcessor) error {
-	return b.consumeOne(delivery, taskProcessor)
+func (b *Broker) ConsumeOneForTest(ctx context.Context, delivery *ReceivedMessages, taskProcessor iface.TaskProcessor) error {
+	return b.consumeOne(ctx, delivery, taskProcessor)
 }
 
-func (b *Broker) DeleteOneForTest(delivery *ReceivedMessages) error {
-	return b.deleteOne(delivery)
+func (b *Broker) DeleteOneForTest(ctx context.Context, delivery *ReceivedMessages) error {
+	return b.deleteOne(ctx, delivery)
 }
 
 func (b *Broker) DefaultQueueURLForTest() *string {
@@ -149,8 +149,8 @@ func (b *Broker) InitializePoolForTest(pool chan struct{}, concurrency int) {
 	b.initializePool(pool, concurrency)
 }
 
-func (b *Broker) ConsumeDeliveriesForTest(deliveries <-chan *ReceivedMessages, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}, errorsChan chan error) (bool, error) {
-	return b.consumeDeliveries(deliveries, concurrency, taskProcessor, pool, errorsChan)
+func (b *Broker) ConsumeDeliveriesForTest(ctx context.Context, deliveries <-chan *ReceivedMessages, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}, errorsChan chan error) (bool, error) {
+	return b.consumeDeliveries(ctx, deliveries, concurrency, taskProcessor, pool, errorsChan)
 }
 
 func (b *Broker) ContinueReceivingMessagesForTest(qURL *string, deliveries chan *awssqs.ReceiveMessageOutput) (bool, error) {

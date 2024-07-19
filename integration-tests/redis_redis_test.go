@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -27,7 +28,7 @@ func TestRedisRedis_Redigo(t *testing.T) {
 
 	worker := server.(*machinery.Server).NewWorker("test_worker", 0)
 	defer worker.Quit()
-	go worker.Launch()
+	go worker.Launch(context.TODO())
 	testAll(server, t)
 }
 
@@ -49,7 +50,7 @@ func TestRedisRedisNormalTaskPollPeriodLessThan1SecondShouldNotFailNextTask(t *t
 	})
 
 	worker := server.(*machinery.Server).NewWorker("test_worker", 0)
-	go worker.Launch()
+	go worker.Launch(context.TODO())
 	defer worker.Quit()
 	testSendTask(server, t)
 }
@@ -70,14 +71,14 @@ func TestRedisRedisWorkerQuitRaceCondition(t *testing.T) {
 			Lock:          fmt.Sprintf("redis://%v", redisURL),
 		}
 
-		server, _ := machinery.NewServer(cnf)
+		server, _ := machinery.NewServer(context.TODO(), cnf)
 		worker := server.NewWorker("test_worker", 0)
 
 		errorsChan := make(chan error, 1)
 
 		// Check Quit() immediately after LaunchAsync() will shutdown gracefully
 		// and not panic on close(b.stopChan)
-		worker.LaunchAsync(errorsChan)
+		worker.LaunchAsync(context.TODO(), errorsChan)
 		worker.Quit()
 
 		if err := <-errorsChan; err != nil {
@@ -105,14 +106,14 @@ func TestRedisRedisWorkerQuickQuit(t *testing.T) {
 		},
 	}
 
-	server, _ := machinery.NewServer(cnf)
+	server, _ := machinery.NewServer(context.TODO(), cnf)
 	worker := server.NewWorker("test_worker", 0)
 
 	errorsChan := make(chan error, 1)
 
 	// Check Quit() immediately after LaunchAsync() will shutdown gracefully
 	// and not panic
-	worker.LaunchAsync(errorsChan)
+	worker.LaunchAsync(context.TODO(), errorsChan)
 
 	before := time.Now()
 	worker.Quit()
@@ -143,7 +144,7 @@ func TestRedisRedisWorkerPreConsumeHandler(t *testing.T) {
 		},
 	}
 
-	server, _ := machinery.NewServer(cnf)
+	server, _ := machinery.NewServer(context.TODO(), cnf)
 	worker := server.NewWorker("test_worker", 0)
 	errorsChan := make(chan error)
 	err := errors.New("PreConsumeHandler is invoked")
@@ -152,7 +153,7 @@ func TestRedisRedisWorkerPreConsumeHandler(t *testing.T) {
 		return true
 	})
 
-	worker.LaunchAsync(errorsChan)
+	worker.LaunchAsync(context.TODO(), errorsChan)
 	if err != <-errorsChan {
 		t.Error("PreConsumeHandler was not invoked")
 	}

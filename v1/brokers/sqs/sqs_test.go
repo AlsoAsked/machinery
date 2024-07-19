@@ -1,17 +1,18 @@
-package sqsv2_test
+package sqs_test
 
 import (
 	"context"
 	"errors"
-	"github.com/RichardKnop/machinery/v1/brokers/iface"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/RichardKnop/machinery/v1/brokers/iface"
+
 	"github.com/stretchr/testify/assert"
 
 	"github.com/RichardKnop/machinery/v1"
-	"github.com/RichardKnop/machinery/v1/brokers/sqsv2"
+	"github.com/RichardKnop/machinery/v1/brokers/sqs"
 	"github.com/RichardKnop/machinery/v1/config"
 	"github.com/RichardKnop/machinery/v1/retry"
 
@@ -22,18 +23,18 @@ import (
 
 var (
 	testBroker           iface.Broker
-	testAWSSQSBroker     *sqsv2.Broker
-	errAWSSQSBroker      *sqsv2.Broker
+	testAWSSQSBroker     *sqs.Broker
+	errAWSSQSBroker      *sqs.Broker
 	cnf                  *config.Config
 	receiveMessageOutput *awssqs.ReceiveMessageOutput
 )
 
 func init() {
-	testAWSSQSBroker = sqsv2.TestAWSSQSBroker
-	errAWSSQSBroker = sqsv2.ErrAWSSQSBroker
-	cnf = sqsv2.TestConf
-	receiveMessageOutput = sqsv2.ReceiveMessageOutput
-	testBroker = sqsv2.New(cnf)
+	testAWSSQSBroker = sqs.TestAWSSQSBroker
+	errAWSSQSBroker = sqs.ErrAWSSQSBroker
+	cnf = sqs.TestConf
+	receiveMessageOutput = sqs.ReceiveMessageOutput
+	testBroker = sqs.New(cnf)
 }
 
 func TestNewAWSSQSBroker(t *testing.T) {
@@ -87,37 +88,37 @@ func TestPrivateFunc_continueReceivingMessages(t *testing.T) {
 }
 
 func TestPrivateFunc_consume(t *testing.T) {
-	server1, err := machinery.NewServer(cnf)
+	server1, err := machinery.NewServer(context.TODO(), cnf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	pool := make(chan struct{}, 0)
 	wk := server1.NewWorker("sms_worker", 0)
-	deliveries := make(chan *sqsv2.ReceivedMessages)
+	deliveries := make(chan *sqs.ReceivedMessages)
 	outputCopy := *receiveMessageOutput
 	outputCopy.Messages = []types.Message{}
-	receivedMsg := sqsv2.ReceivedMessages{Delivery: &outputCopy}
+	receivedMsg := sqs.ReceivedMessages{Delivery: &outputCopy}
 	go func() { deliveries <- &receivedMsg }()
 
 	// an infinite loop will be executed only when there is no error
-	err = testAWSSQSBroker.ConsumeForTest(deliveries, 0, wk, pool)
+	err = testAWSSQSBroker.ConsumeForTest(context.TODO(), deliveries, 0, wk, pool)
 	assert.NotNil(t, err)
 
 }
 
 func TestPrivateFunc_consumeOne(t *testing.T) {
-	server1, err := machinery.NewServer(cnf)
+	server1, err := machinery.NewServer(context.TODO(), cnf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	wk := server1.NewWorker("sms_worker", 0)
 	outputCopy := *receiveMessageOutput
 	outputCopy.Messages = []types.Message{}
-	receivedMsg := sqsv2.ReceivedMessages{Delivery: &outputCopy}
-	err = testAWSSQSBroker.ConsumeOneForTest(&receivedMsg, wk)
+	receivedMsg := sqs.ReceivedMessages{Delivery: &outputCopy}
+	err = testAWSSQSBroker.ConsumeOneForTest(context.TODO(), &receivedMsg, wk)
 	assert.NotNil(t, err)
 
-	err = testAWSSQSBroker.ConsumeOneForTest(&receivedMsg, wk)
+	err = testAWSSQSBroker.ConsumeOneForTest(context.TODO(), &receivedMsg, wk)
 	assert.NotNil(t, err)
 
 	outputCopy.Messages = []types.Message{
@@ -125,8 +126,8 @@ func TestPrivateFunc_consumeOne(t *testing.T) {
 			Body: aws.String("foo message"),
 		},
 	}
-	receivedMsg = sqsv2.ReceivedMessages{Delivery: &outputCopy}
-	err = testAWSSQSBroker.ConsumeOneForTest(&receivedMsg, wk)
+	receivedMsg = sqs.ReceivedMessages{Delivery: &outputCopy}
+	err = testAWSSQSBroker.ConsumeOneForTest(context.TODO(), &receivedMsg, wk)
 	assert.NotNil(t, err)
 }
 
@@ -138,7 +139,7 @@ func TestPrivateFunc_initializePool(t *testing.T) {
 }
 
 func TestPrivateFunc_startConsuming(t *testing.T) {
-	server1, err := machinery.NewServer(cnf)
+	server1, err := machinery.NewServer(context.TODO(), cnf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,35 +178,35 @@ func TestPrivateFunc_consumeDeliveries(t *testing.T) {
 	concurrency := 0
 	pool := make(chan struct{}, concurrency)
 	errorsChan := make(chan error)
-	deliveries := make(chan *sqsv2.ReceivedMessages)
-	server1, err := machinery.NewServer(cnf)
+	deliveries := make(chan *sqs.ReceivedMessages)
+	server1, err := machinery.NewServer(context.TODO(), cnf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	wk := server1.NewWorker("sms_worker", 0)
 	outputCopy := *receiveMessageOutput
 	outputCopy.Messages = []types.Message{}
-	receivedMsg := sqsv2.ReceivedMessages{Delivery: &outputCopy}
+	receivedMsg := sqs.ReceivedMessages{Delivery: &outputCopy}
 	go func() { deliveries <- &receivedMsg }()
-	whetherContinue, err := testAWSSQSBroker.ConsumeDeliveriesForTest(deliveries, concurrency, wk, pool, errorsChan)
+	whetherContinue, err := testAWSSQSBroker.ConsumeDeliveriesForTest(context.TODO(), deliveries, concurrency, wk, pool, errorsChan)
 	assert.True(t, whetherContinue)
 	assert.Nil(t, err)
 
 	go func() { errorsChan <- errors.New("foo error") }()
-	whetherContinue, err = testAWSSQSBroker.ConsumeDeliveriesForTest(deliveries, concurrency, wk, pool, errorsChan)
+	whetherContinue, err = testAWSSQSBroker.ConsumeDeliveriesForTest(context.TODO(), deliveries, concurrency, wk, pool, errorsChan)
 	assert.False(t, whetherContinue)
 	assert.NotNil(t, err)
 
 	go func() { testAWSSQSBroker.GetStopChanForTest() <- 1 }()
-	whetherContinue, err = testAWSSQSBroker.ConsumeDeliveriesForTest(deliveries, concurrency, wk, pool, errorsChan)
+	whetherContinue, err = testAWSSQSBroker.ConsumeDeliveriesForTest(context.TODO(), deliveries, concurrency, wk, pool, errorsChan)
 	assert.False(t, whetherContinue)
 	assert.Nil(t, err)
 
 	outputCopy = *receiveMessageOutput
 	outputCopy.Messages = []types.Message{}
-	receivedMsg = sqsv2.ReceivedMessages{Delivery: &outputCopy}
+	receivedMsg = sqs.ReceivedMessages{Delivery: &outputCopy}
 	go func() { deliveries <- &receivedMsg }()
-	whetherContinue, err = testAWSSQSBroker.ConsumeDeliveriesForTest(deliveries, concurrency, wk, pool, errorsChan)
+	whetherContinue, err = testAWSSQSBroker.ConsumeDeliveriesForTest(context.TODO(), deliveries, concurrency, wk, pool, errorsChan)
 	e := <-errorsChan
 	assert.True(t, whetherContinue)
 	assert.NotNil(t, e)
@@ -214,7 +215,7 @@ func TestPrivateFunc_consumeDeliveries(t *testing.T) {
 	// using a wait group and a channel to fix the racing problem
 	outputCopy = *receiveMessageOutput
 	outputCopy.Messages = []types.Message{}
-	receivedMsg = sqsv2.ReceivedMessages{Delivery: &outputCopy}
+	receivedMsg = sqs.ReceivedMessages{Delivery: &outputCopy}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	nextStep := make(chan bool, 1)
@@ -228,7 +229,7 @@ func TestPrivateFunc_consumeDeliveries(t *testing.T) {
 		// <-pool will block the routine in the following steps, so pool <- struct{}{} will be executed for sure
 		go func() { wg.Wait(); pool <- struct{}{} }()
 	}
-	whetherContinue, err = testAWSSQSBroker.ConsumeDeliveriesForTest(deliveries, concurrency, wk, pool, errorsChan)
+	whetherContinue, err = testAWSSQSBroker.ConsumeDeliveriesForTest(context.TODO(), deliveries, concurrency, wk, pool, errorsChan)
 	// the pool shouldn't be consumed
 	p := <-pool
 	assert.True(t, whetherContinue)
@@ -244,16 +245,16 @@ func TestPrivateFunc_deleteOne(t *testing.T) {
 			ReceiptHandle: aws.String("receipthandle"),
 		},
 	}
-	receivedMsg := sqsv2.ReceivedMessages{Delivery: &outputCopy}
-	err := testAWSSQSBroker.DeleteOneForTest(&receivedMsg)
+	receivedMsg := sqs.ReceivedMessages{Delivery: &outputCopy}
+	err := testAWSSQSBroker.DeleteOneForTest(context.TODO(), &receivedMsg)
 	assert.Nil(t, err)
 
-	err = errAWSSQSBroker.DeleteOneForTest(&receivedMsg)
+	err = errAWSSQSBroker.DeleteOneForTest(context.TODO(), &receivedMsg)
 	assert.NotNil(t, err)
 }
 
 func Test_CustomQueueName(t *testing.T) {
-	server1, err := machinery.NewServer(cnf)
+	server1, err := machinery.NewServer(context.TODO(), cnf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +281,7 @@ func TestPrivateFunc_consumeWithConcurrency(t *testing.T) {
 	output := make(chan string) // The output channel
 
 	cnf.ResultBackend = "eager"
-	server1, err := machinery.NewServer(cnf)
+	server1, err := machinery.NewServer(context.TODO(), cnf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +295,7 @@ func TestPrivateFunc_consumeWithConcurrency(t *testing.T) {
 	pool := make(chan struct{}, 1)
 	pool <- struct{}{}
 	wk := server1.NewWorker("sms_worker", 1)
-	deliveries := make(chan *sqsv2.ReceivedMessages)
+	deliveries := make(chan *sqs.ReceivedMessages)
 	outputCopy := *receiveMessageOutput
 	outputCopy.Messages = []types.Message{
 		{
@@ -302,14 +303,14 @@ func TestPrivateFunc_consumeWithConcurrency(t *testing.T) {
 			Body:      aws.String(msg),
 		},
 	}
-	receivedMsg := sqsv2.ReceivedMessages{Delivery: &outputCopy}
+	receivedMsg := sqs.ReceivedMessages{Delivery: &outputCopy}
 	go func() {
 		deliveries <- &receivedMsg
 
 	}()
 
 	go func() {
-		err = testAWSSQSBroker.ConsumeForTest(deliveries, 1, wk, pool)
+		err = testAWSSQSBroker.ConsumeForTest(context.TODO(), deliveries, 1, wk, pool)
 	}()
 
 	select {
@@ -349,7 +350,7 @@ func (r *roundRobinQueues) Next() string {
 }
 
 func TestPrivateFunc_consumeWithRoundRobinQueues(t *testing.T) {
-	server1, err := machinery.NewServer(cnf)
+	server1, err := machinery.NewServer(context.TODO(), cnf)
 	if err != nil {
 		t.Fatal(err)
 	}

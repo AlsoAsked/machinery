@@ -1,6 +1,7 @@
 package machinery
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -42,16 +43,16 @@ var (
 
 // Launch starts a new worker process. The worker subscribes
 // to the default queue and processes incoming registered tasks
-func (worker *Worker) Launch() error {
+func (worker *Worker) Launch(ctx context.Context) error {
 	errorsChan := make(chan error)
 
-	worker.LaunchAsync(errorsChan)
+	worker.LaunchAsync(ctx, errorsChan)
 
 	return <-errorsChan
 }
 
 // LaunchAsync is a non blocking version of Launch
-func (worker *Worker) LaunchAsync(errorsChan chan<- error) {
+func (worker *Worker) LaunchAsync(ctx context.Context, errorsChan chan<- error) {
 	cnf := worker.server.GetConfig()
 	broker := worker.server.GetBroker()
 
@@ -76,7 +77,7 @@ func (worker *Worker) LaunchAsync(errorsChan chan<- error) {
 	// Goroutine to start broker consumption and handle retries when broker connection dies
 	go func() {
 		for {
-			retry, err := broker.StartConsuming(worker.ConsumerTag, worker.Concurrency, worker)
+			retry, err := broker.StartConsuming(ctx, worker.ConsumerTag, worker.Concurrency, worker)
 
 			if retry {
 				if worker.errorHandler != nil {
@@ -136,7 +137,7 @@ func (worker *Worker) Quit() {
 }
 
 // Process handles received tasks and triggers success/error callbacks
-func (worker *Worker) Process(signature *tasks.Signature) error {
+func (worker *Worker) Process(ctx context.Context, signature *tasks.Signature) error {
 	// If the task is not registered with this worker, do not continue
 	// but only return nil as we do not want to restart the worker process
 	if !worker.server.IsTaskRegistered(signature.Name) {
@@ -149,7 +150,7 @@ func (worker *Worker) Process(signature *tasks.Signature) error {
 	}
 
 	// Update task state to RECEIVED
-	if err = worker.server.GetBackend().SetStateReceived(signature); err != nil {
+	if err = worker.server.GetBackend().SetStateReceived(ctx, signature); err != nil {
 		return fmt.Errorf("Set state to 'received' for task %s returned error: %s", signature.UUID, err)
 	}
 
@@ -158,7 +159,7 @@ func (worker *Worker) Process(signature *tasks.Signature) error {
 	// if this failed, it means the task is malformed, probably has invalid
 	// signature, go directly to task failed without checking whether to retry
 	if err != nil {
-		worker.taskFailed(signature, err)
+		worker.taskFailed(ctx, signature, err)
 		return err
 	}
 
@@ -170,7 +171,7 @@ func (worker *Worker) Process(signature *tasks.Signature) error {
 	task.Context = opentracing.ContextWithSpan(task.Context, taskSpan)
 
 	// Update task state to STARTED
-	if err = worker.server.GetBackend().SetStateStarted(signature); err != nil {
+	if err = worker.server.GetBackend().SetStateStarted(ctx, signature); err != nil {
 		return fmt.Errorf("Set state to 'started' for task %s returned error: %s", signature.UUID, err)
 	}
 
@@ -191,25 +192,25 @@ func (worker *Worker) Process(signature *tasks.Signature) error {
 		// retry the task after specified duration
 		retriableErr, ok := interface{}(err).(tasks.ErrRetryTaskLater)
 		if ok {
-			return worker.retryTaskIn(signature, retriableErr.RetryIn())
+			return worker.retryTaskIn(ctx, signature, retriableErr.RetryIn())
 		}
 
 		// Otherwise, execute default retry logic based on signature.RetryCount
 		// or signature.RetryForever, and signature.RetryTimeout values
 		if signature.RetryCount > 0 || signature.RetryForever {
-			return worker.taskRetry(signature, err)
+			return worker.taskRetry(ctx, signature, err)
 		}
 
-		return worker.taskFailed(signature, err)
+		return worker.taskFailed(ctx, signature, err)
 	}
 
-	return worker.taskSucceeded(signature, results)
+	return worker.taskSucceeded(ctx, signature, results)
 }
 
 // retryTask decrements RetryCount counter and republishes the task to the queue
-func (worker *Worker) taskRetry(signature *tasks.Signature, taskErr error) error {
+func (worker *Worker) taskRetry(ctx context.Context, signature *tasks.Signature, taskErr error) error {
 	// Update task state to RETRY
-	if err := worker.server.GetBackend().SetStateRetry(signature); err != nil {
+	if err := worker.server.GetBackend().SetStateRetry(ctx, signature); err != nil {
 		return fmt.Errorf("Set state to 'retry' for task %s returned error: %s", signature.UUID, err)
 	}
 
@@ -239,9 +240,9 @@ func (worker *Worker) taskRetry(signature *tasks.Signature, taskErr error) error
 }
 
 // taskRetryIn republishes the task to the queue with ETA of now + retryIn.Seconds()
-func (worker *Worker) retryTaskIn(signature *tasks.Signature, retryIn time.Duration) error {
+func (worker *Worker) retryTaskIn(ctx context.Context, signature *tasks.Signature, retryIn time.Duration) error {
 	// Update task state to RETRY
-	if err := worker.server.GetBackend().SetStateRetry(signature); err != nil {
+	if err := worker.server.GetBackend().SetStateRetry(ctx, signature); err != nil {
 		return fmt.Errorf("Set state to 'retry' for task %s returned error: %s", signature.UUID, err)
 	}
 
@@ -258,9 +259,9 @@ func (worker *Worker) retryTaskIn(signature *tasks.Signature, retryIn time.Durat
 
 // taskSucceeded updates the task state and triggers success callbacks or a
 // chord callback if this was the last task of a group with a chord callback
-func (worker *Worker) taskSucceeded(signature *tasks.Signature, taskResults []*tasks.TaskResult) error {
+func (worker *Worker) taskSucceeded(ctx context.Context, signature *tasks.Signature, taskResults []*tasks.TaskResult) error {
 	// Update task state to SUCCESS
-	if err := worker.server.GetBackend().SetStateSuccess(signature, taskResults); err != nil {
+	if err := worker.server.GetBackend().SetStateSuccess(ctx, signature, taskResults); err != nil {
 		return fmt.Errorf("Set state to 'success' for task %s returned error: %s", signature.UUID, err)
 	}
 
@@ -302,6 +303,7 @@ func (worker *Worker) taskSucceeded(signature *tasks.Signature, taskResults []*t
 
 	// Check if all task in the group has completed
 	groupCompleted, err := worker.server.GetBackend().GroupCompleted(
+		ctx,
 		signature.GroupUUID,
 		signature.GroupTaskCount,
 	)
@@ -316,11 +318,11 @@ func (worker *Worker) taskSucceeded(signature *tasks.Signature, taskResults []*t
 
 	// Defer purging of group meta queue if we are using AMQP backend
 	if worker.hasAMQPBackend() {
-		defer worker.server.GetBackend().PurgeGroupMeta(signature.GroupUUID)
+		defer worker.server.GetBackend().PurgeGroupMeta(ctx, signature.GroupUUID)
 	}
 
 	// Trigger chord callback
-	shouldTrigger, err := worker.server.GetBackend().TriggerChord(signature.GroupUUID)
+	shouldTrigger, err := worker.server.GetBackend().TriggerChord(ctx, signature.GroupUUID)
 	if err != nil {
 		return fmt.Errorf("Triggering chord for group %s returned error: %s", signature.GroupUUID, err)
 	}
@@ -332,6 +334,7 @@ func (worker *Worker) taskSucceeded(signature *tasks.Signature, taskResults []*t
 
 	// Get task states
 	taskStates, err := worker.server.GetBackend().GroupTaskStates(
+		ctx,
 		signature.GroupUUID,
 		signature.GroupTaskCount,
 	)
@@ -372,9 +375,9 @@ func (worker *Worker) taskSucceeded(signature *tasks.Signature, taskResults []*t
 }
 
 // taskFailed updates the task state and triggers error callbacks
-func (worker *Worker) taskFailed(signature *tasks.Signature, taskErr error) error {
+func (worker *Worker) taskFailed(ctx context.Context, signature *tasks.Signature, taskErr error) error {
 	// Update task state to FAILURE
-	if err := worker.server.GetBackend().SetStateFailure(signature, taskErr.Error()); err != nil {
+	if err := worker.server.GetBackend().SetStateFailure(ctx, signature, taskErr.Error()); err != nil {
 		return fmt.Errorf("Set state to 'failure' for task %s returned error: %s", signature.UUID, err)
 	}
 

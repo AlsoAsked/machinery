@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
@@ -28,7 +29,7 @@ func TestSQSMongodb(t *testing.T) {
 		Lock:            "eager",
 	})
 	worker := server.(*machinery.Server).NewWorker("test_worker", 0)
-	go worker.Launch()
+	go worker.Launch(context.TODO())
 	testAll(server, t)
 	worker.Quit()
 }

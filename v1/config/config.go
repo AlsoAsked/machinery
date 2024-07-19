@@ -9,10 +9,8 @@ import (
 	"cloud.google.com/go/pubsub"
 	"go.mongodb.org/mongo-driver/mongo"
 
-	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/aws/aws-sdk-go/service/sqs"
-
-	sqsv2 "github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/RichardKnop/machinery/v1/backends/iface"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 )
 
 const (
@@ -92,21 +90,14 @@ type AMQPConfig struct {
 
 // DynamoDBConfig wraps DynamoDB related configuration
 type DynamoDBConfig struct {
-	Client          *dynamodb.DynamoDB
+	Client          iface.DynamoDBAPI
 	TaskStatesTable string `yaml:"task_states_table" envconfig:"TASK_STATES_TABLE"`
 	GroupMetasTable string `yaml:"group_metas_table" envconfig:"GROUP_METAS_TABLE"`
 }
 
 // SQSConfig wraps SQS related configuration
 type SQSConfig struct {
-	Client *sqs.SQS
-	// aws-sdk-go-v2 is incompatible with aws-sdk-go
-	// obtaining credentials fails when running aws-sdk-go IMDSv2 enabled instances
-	// There is no common interface between v1 and v2 SQS client, v2 requires following
-	//	- requires context as additional parameter on all calls,
-	//	- various parameters of type []*string are changed to []string, similarly map[string]string
-	//	- unlike v1 client which confirms to sqsiface.SQSAPI, v2 client doesn't confirm to a single interface
-	ClientV2        *sqsv2.Client
+	Client          *sqs.Client
 	WaitTimeSeconds int `yaml:"receive_wait_time_seconds" envconfig:"SQS_WAIT_TIME_SECONDS"`
 	// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html
 	// visibility timeout should default to nil to use the overall visibility timeout for the queue

@@ -44,7 +44,7 @@ func New(cnf *config.Config) iface.Broker {
 }
 
 // StartConsuming enters a loop and waits for incoming messages
-func (b *Broker) StartConsuming(consumerTag string, concurrency int, taskProcessor iface.TaskProcessor) (bool, error) {
+func (b *Broker) StartConsuming(ctx context.Context, consumerTag string, concurrency int, taskProcessor iface.TaskProcessor) (bool, error) {
 	b.Broker.StartConsuming(consumerTag, concurrency, taskProcessor)
 
 	queueName := taskProcessor.CustomQueue()
@@ -95,7 +95,7 @@ func (b *Broker) StartConsuming(consumerTag string, concurrency int, taskProcess
 
 	log.INFO.Print("[*] Waiting for messages. To exit press CTRL+C")
 
-	if err := b.consume(deliveries, concurrency, taskProcessor, amqpCloseChan); err != nil {
+	if err := b.consume(ctx, deliveries, concurrency, taskProcessor, amqpCloseChan); err != nil {
 		return b.GetRetry(), err
 	}
 
@@ -251,7 +251,7 @@ func (b *Broker) Publish(ctx context.Context, signature *tasks.Signature) error 
 
 // consume takes delivered messages from the channel and manages a worker pool
 // to process tasks concurrently
-func (b *Broker) consume(deliveries <-chan amqp.Delivery, concurrency int, taskProcessor iface.TaskProcessor, amqpCloseChan <-chan *amqp.Error) error {
+func (b *Broker) consume(ctx context.Context, deliveries <-chan amqp.Delivery, concurrency int, taskProcessor iface.TaskProcessor, amqpCloseChan <-chan *amqp.Error) error {
 	pool := make(chan struct{}, concurrency)
 
 	// initialize worker pool with maxWorkers workers
@@ -283,7 +283,7 @@ func (b *Broker) consume(deliveries <-chan amqp.Delivery, concurrency int, taskP
 			// Consume the task inside a gotourine so multiple tasks
 			// can be processed concurrently
 			go func() {
-				if err := b.consumeOne(d, taskProcessor, true); err != nil {
+				if err := b.consumeOne(ctx, d, taskProcessor, true); err != nil {
 					errorsChan <- err
 				}
 
@@ -301,7 +301,7 @@ func (b *Broker) consume(deliveries <-chan amqp.Delivery, concurrency int, taskP
 }
 
 // consumeOne processes a single message using TaskProcessor
-func (b *Broker) consumeOne(delivery amqp.Delivery, taskProcessor iface.TaskProcessor, ack bool) error {
+func (b *Broker) consumeOne(ctx context.Context, delivery amqp.Delivery, taskProcessor iface.TaskProcessor, ack bool) error {
 	if len(delivery.Body) == 0 {
 		delivery.Nack(true, false)                     // multiple, requeue
 		return errors.New("Received an empty message") // RabbitMQ down?
@@ -333,7 +333,7 @@ func (b *Broker) consumeOne(delivery amqp.Delivery, taskProcessor iface.TaskProc
 
 	log.DEBUG.Printf("Received new message: %s", delivery.Body)
 
-	err := taskProcessor.Process(signature)
+	err := taskProcessor.Process(ctx, signature)
 	if ack {
 		delivery.Ack(multiple)
 	}
@@ -439,7 +439,7 @@ type sigDumper struct {
 	Signatures  []*tasks.Signature
 }
 
-func (s *sigDumper) Process(sig *tasks.Signature) error {
+func (s *sigDumper) Process(ctx context.Context, sig *tasks.Signature) error {
 	s.Signatures = append(s.Signatures, sig)
 	return nil
 }
@@ -452,7 +452,7 @@ func (_ *sigDumper) PreConsumeHandler() bool {
 	return true
 }
 
-func (b *Broker) GetPendingTasks(queue string) ([]*tasks.Signature, error) {
+func (b *Broker) GetPendingTasks(ctx context.Context, queue string) ([]*tasks.Signature, error) {
 	if queue == "" {
 		queue = b.GetConfig().DefaultQueue
 	}
@@ -485,7 +485,7 @@ func (b *Broker) GetPendingTasks(queue string) ([]*tasks.Signature, error) {
 			return nil, errors.Wrap(err, "Failed to get from queue")
 		}
 		tag = d.DeliveryTag
-		b.consumeOne(d, dumper, false)
+		b.consumeOne(ctx, d, dumper, false)
 	}
 
 	return dumper.Signatures, nil

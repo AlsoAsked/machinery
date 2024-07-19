@@ -1,6 +1,7 @@
 package mongo_test
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -26,12 +27,12 @@ func newBackend() (iface.Backend, error) {
 		return nil, err
 	}
 
-	backend.PurgeGroupMeta(groupUUID)
+	backend.PurgeGroupMeta(context.TODO(), groupUUID)
 	for _, taskUUID := range taskUUIDs {
-		backend.PurgeState(taskUUID)
+		backend.PurgeState(context.TODO(), taskUUID)
 	}
 
-	if err := backend.InitGroup(groupUUID, taskUUIDs); err != nil {
+	if err := backend.InitGroup(context.TODO(), groupUUID, taskUUIDs); err != nil {
 		return nil, err
 	}
 	return backend, nil
@@ -58,11 +59,11 @@ func TestSetStatePending(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = backend.SetStatePending(&tasks.Signature{
+	err = backend.SetStatePending(context.TODO(), &tasks.Signature{
 		UUID: taskUUIDs[0],
 	})
 	if assert.NoError(t, err) {
-		taskState, err := backend.GetState(taskUUIDs[0])
+		taskState, err := backend.GetState(context.TODO(), taskUUIDs[0])
 		if assert.NoError(t, err) {
 			assert.Equal(t, tasks.StatePending, taskState.State, "Not StatePending")
 		}
@@ -79,11 +80,11 @@ func TestSetStateReceived(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = backend.SetStateReceived(&tasks.Signature{
+	err = backend.SetStateReceived(context.TODO(), &tasks.Signature{
 		UUID: taskUUIDs[0],
 	})
 	if assert.NoError(t, err) {
-		taskState, err := backend.GetState(taskUUIDs[0])
+		taskState, err := backend.GetState(context.TODO(), taskUUIDs[0])
 		if assert.NoError(t, err) {
 			assert.Equal(t, tasks.StateReceived, taskState.State, "Not StateReceived")
 		}
@@ -100,11 +101,11 @@ func TestSetStateStarted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = backend.SetStateStarted(&tasks.Signature{
+	err = backend.SetStateStarted(context.TODO(), &tasks.Signature{
 		UUID: taskUUIDs[0],
 	})
 	if assert.NoError(t, err) {
-		taskState, err := backend.GetState(taskUUIDs[0])
+		taskState, err := backend.GetState(context.TODO(), taskUUIDs[0])
 		if assert.NoError(t, err) {
 			assert.Equal(t, tasks.StateStarted, taskState.State, "Not StateStarted")
 		}
@@ -133,10 +134,10 @@ func TestSetStateSuccess(t *testing.T) {
 			Value: resultValue,
 		},
 	}
-	err = backend.SetStateSuccess(signature, taskResults)
+	err = backend.SetStateSuccess(context.TODO(), signature, taskResults)
 	assert.NoError(t, err)
 
-	taskState, err := backend.GetState(taskUUIDs[0])
+	taskState, err := backend.GetState(context.TODO(), taskUUIDs[0])
 	assert.NoError(t, err)
 	assert.Equal(t, tasks.StateSuccess, taskState.State, "Not StateSuccess")
 	assert.Equal(t, resultType, taskState.Results[0].Type, "Wrong result type")
@@ -158,10 +159,10 @@ func TestSetStateFailure(t *testing.T) {
 	signature := &tasks.Signature{
 		UUID: taskUUIDs[0],
 	}
-	err = backend.SetStateFailure(signature, failString)
+	err = backend.SetStateFailure(context.TODO(), signature, failString)
 	assert.NoError(t, err)
 
-	taskState, err := backend.GetState(taskUUIDs[0])
+	taskState, err := backend.GetState(context.TODO(), taskUUIDs[0])
 	assert.NoError(t, err)
 	assert.Equal(t, tasks.StateFailure, taskState.State, "Not StateSuccess")
 	assert.Equal(t, failString, taskState.Error, "Wrong fail error")
@@ -178,7 +179,7 @@ func TestGroupCompleted(t *testing.T) {
 	}
 	taskResultsState := make(map[string]string)
 
-	isCompleted, err := backend.GroupCompleted(groupUUID, len(taskUUIDs))
+	isCompleted, err := backend.GroupCompleted(context.TODO(), groupUUID, len(taskUUIDs))
 	if assert.NoError(t, err) {
 		assert.False(t, isCompleted, "Actually group is not completed")
 	}
@@ -186,7 +187,7 @@ func TestGroupCompleted(t *testing.T) {
 	signature := &tasks.Signature{
 		UUID: taskUUIDs[0],
 	}
-	err = backend.SetStateFailure(signature, "Fail is ok")
+	err = backend.SetStateFailure(context.TODO(), signature, "Fail is ok")
 	assert.NoError(t, err)
 	taskResultsState[taskUUIDs[0]] = tasks.StateFailure
 
@@ -199,23 +200,23 @@ func TestGroupCompleted(t *testing.T) {
 			Value: "Result ok",
 		},
 	}
-	err = backend.SetStateSuccess(signature, taskResults)
+	err = backend.SetStateSuccess(context.TODO(), signature, taskResults)
 	assert.NoError(t, err)
 	taskResultsState[taskUUIDs[1]] = tasks.StateSuccess
 
 	signature = &tasks.Signature{
 		UUID: taskUUIDs[2],
 	}
-	err = backend.SetStateSuccess(signature, taskResults)
+	err = backend.SetStateSuccess(context.TODO(), signature, taskResults)
 	assert.NoError(t, err)
 	taskResultsState[taskUUIDs[2]] = tasks.StateSuccess
 
-	isCompleted, err = backend.GroupCompleted(groupUUID, len(taskUUIDs))
+	isCompleted, err = backend.GroupCompleted(context.TODO(), groupUUID, len(taskUUIDs))
 	if assert.NoError(t, err) {
 		assert.True(t, isCompleted, "Actually group is completed")
 	}
 
-	taskStates, err := backend.GroupTaskStates(groupUUID, len(taskUUIDs))
+	taskStates, err := backend.GroupTaskStates(context.TODO(), groupUUID, len(taskUUIDs))
 	assert.NoError(t, err)
 
 	assert.Equal(t, len(taskStates), len(taskUUIDs), "Wrong len tasksStates")
@@ -239,7 +240,7 @@ func TestGroupStates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	taskStates, err := backend.GroupTaskStates(groupUUID, len(taskUUIDs))
+	taskStates, err := backend.GroupTaskStates(context.TODO(), groupUUID, len(taskUUIDs))
 	assert.NoError(t, err)
 	for i, taskState := range taskStates {
 		assert.Equal(t, taskUUIDs[i], taskState.TaskUUID)

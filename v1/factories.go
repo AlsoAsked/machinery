@@ -1,6 +1,7 @@
 package machinery
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -16,7 +17,7 @@ import (
 	gcppubsubbroker "github.com/RichardKnop/machinery/v1/brokers/gcppubsub"
 	brokeriface "github.com/RichardKnop/machinery/v1/brokers/iface"
 	redisbroker "github.com/RichardKnop/machinery/v1/brokers/redis"
-	sqsbrokerv2 "github.com/RichardKnop/machinery/v1/brokers/sqsv2"
+	sqsbroker "github.com/RichardKnop/machinery/v1/brokers/sqs"
 
 	amqpbackend "github.com/RichardKnop/machinery/v1/backends/amqp"
 	dynamobackend "github.com/RichardKnop/machinery/v1/backends/dynamodb"
@@ -96,11 +97,11 @@ func BrokerFactory(cnf *config.Config) (brokeriface.Broker, error) {
 
 		//even when disabling strict SQS naming check, make sure its still a valid http URL
 		if strings.HasPrefix(cnf.Broker, "https://") || strings.HasPrefix(cnf.Broker, "http://") {
-			return sqsbrokerv2.New(cnf), nil
+			return sqsbroker.New(cnf), nil
 		}
 	} else {
 		if strings.HasPrefix(cnf.Broker, "https://sqs") {
-			return sqsbrokerv2.New(cnf), nil
+			return sqsbroker.New(cnf), nil
 		}
 	}
 
@@ -117,7 +118,7 @@ func BrokerFactory(cnf *config.Config) (brokeriface.Broker, error) {
 
 // BackendFactory creates a new object of backends.Interface
 // Currently supported backends are AMQP/S and Memcache
-func BackendFactory(cnf *config.Config) (backendiface.Backend, error) {
+func BackendFactory(ctx context.Context, cnf *config.Config) (backendiface.Backend, error) {
 
 	if strings.HasPrefix(cnf.ResultBackend, "amqp://") {
 		return amqpbackend.New(cnf), nil
@@ -184,7 +185,7 @@ func BackendFactory(cnf *config.Config) (backendiface.Backend, error) {
 	}
 
 	if strings.HasPrefix(cnf.ResultBackend, "https://dynamodb") {
-		return dynamobackend.New(cnf), nil
+		return dynamobackend.New(ctx, cnf), nil
 	}
 
 	return nil, fmt.Errorf("Factory failed with result backend: %v", cnf.ResultBackend)

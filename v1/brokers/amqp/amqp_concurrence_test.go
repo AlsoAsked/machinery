@@ -1,6 +1,7 @@
 package amqp
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 
 type doNothingProcessor struct{}
 
-func (_ doNothingProcessor) Process(signature *tasks.Signature) error {
+func (_ doNothingProcessor) Process(ctx context.Context, signature *tasks.Signature) error {
 	return fmt.Errorf("failed")
 }
 
@@ -46,7 +47,7 @@ func TestConsume(t *testing.T) {
 		}()
 
 		go func() {
-			err := broker.consume(deliveries, 2, processor, closeChan)
+			err := broker.consume(context.TODO(), deliveries, 2, processor, closeChan)
 			if err != nil {
 				errChan <- err
 			}

@@ -1,6 +1,7 @@
 package memcache_test
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -30,41 +31,41 @@ func TestGroupCompleted(t *testing.T) {
 	backend := memcache.New(new(config.Config), []string{memcacheURL})
 
 	// Cleanup before the test
-	backend.PurgeState(task1.UUID)
-	backend.PurgeState(task2.UUID)
-	backend.PurgeGroupMeta(groupUUID)
+	backend.PurgeState(context.TODO(), task1.UUID)
+	backend.PurgeState(context.TODO(), task2.UUID)
+	backend.PurgeGroupMeta(context.TODO(), groupUUID)
 
-	groupCompleted, err := backend.GroupCompleted(groupUUID, 2)
+	groupCompleted, err := backend.GroupCompleted(context.TODO(), groupUUID, 2)
 	if assert.Error(t, err) {
 		assert.False(t, groupCompleted)
 		assert.Equal(t, "memcache: cache miss", err.Error())
 	}
 
-	backend.InitGroup(groupUUID, []string{task1.UUID, task2.UUID})
+	backend.InitGroup(context.TODO(), groupUUID, []string{task1.UUID, task2.UUID})
 
-	groupCompleted, err = backend.GroupCompleted(groupUUID, 2)
+	groupCompleted, err = backend.GroupCompleted(context.TODO(), groupUUID, 2)
 	if assert.Error(t, err) {
 		assert.False(t, groupCompleted)
 		assert.Equal(t, "memcache: cache miss", err.Error())
 	}
 
-	backend.SetStatePending(task1)
-	backend.SetStateStarted(task2)
-	groupCompleted, err = backend.GroupCompleted(groupUUID, 2)
+	backend.SetStatePending(context.TODO(), task1)
+	backend.SetStateStarted(context.TODO(), task2)
+	groupCompleted, err = backend.GroupCompleted(context.TODO(), groupUUID, 2)
 	if assert.NoError(t, err) {
 		assert.False(t, groupCompleted)
 	}
 
 	taskResults := []*tasks.TaskResult{new(tasks.TaskResult)}
-	backend.SetStateStarted(task1)
-	backend.SetStateSuccess(task2, taskResults)
-	groupCompleted, err = backend.GroupCompleted(groupUUID, 2)
+	backend.SetStateStarted(context.TODO(), task1)
+	backend.SetStateSuccess(context.TODO(), task2, taskResults)
+	groupCompleted, err = backend.GroupCompleted(context.TODO(), groupUUID, 2)
 	if assert.NoError(t, err) {
 		assert.False(t, groupCompleted)
 	}
 
-	backend.SetStateFailure(task1, "Some error")
-	groupCompleted, err = backend.GroupCompleted(groupUUID, 2)
+	backend.SetStateFailure(context.TODO(), task1, "Some error")
+	groupCompleted, err = backend.GroupCompleted(context.TODO(), groupUUID, 2)
 	if assert.NoError(t, err) {
 		assert.True(t, groupCompleted)
 	}
@@ -84,11 +85,11 @@ func TestGetState(t *testing.T) {
 	backend := memcache.New(new(config.Config), []string{memcacheURL})
 
 	go func() {
-		backend.SetStatePending(signature)
+		backend.SetStatePending(context.TODO(), signature)
 		time.Sleep(2 * time.Millisecond)
-		backend.SetStateReceived(signature)
+		backend.SetStateReceived(context.TODO(), signature)
 		time.Sleep(2 * time.Millisecond)
-		backend.SetStateStarted(signature)
+		backend.SetStateStarted(context.TODO(), signature)
 		time.Sleep(2 * time.Millisecond)
 		taskResults := []*tasks.TaskResult{
 			{
@@ -96,7 +97,7 @@ func TestGetState(t *testing.T) {
 				Value: 2,
 			},
 		}
-		backend.SetStateSuccess(signature, taskResults)
+		backend.SetStateSuccess(context.TODO(), signature, taskResults)
 	}()
 
 	var (
@@ -104,7 +105,7 @@ func TestGetState(t *testing.T) {
 		err       error
 	)
 	for {
-		taskState, err = backend.GetState(signature.UUID)
+		taskState, err = backend.GetState(context.TODO(), signature.UUID)
 		if taskState == nil {
 			assert.Equal(t, "memcache: cache miss", err.Error())
 			continue
@@ -130,13 +131,13 @@ func TestPurgeState(t *testing.T) {
 
 	backend := memcache.New(new(config.Config), []string{memcacheURL})
 
-	backend.SetStatePending(signature)
-	taskState, err := backend.GetState(signature.UUID)
+	backend.SetStatePending(context.TODO(), signature)
+	taskState, err := backend.GetState(context.TODO(), signature.UUID)
 	assert.NotNil(t, taskState)
 	assert.NoError(t, err)
 
-	backend.PurgeState(taskState.TaskUUID)
-	taskState, err = backend.GetState(signature.UUID)
+	backend.PurgeState(context.TODO(), taskState.TaskUUID)
+	taskState, err = backend.GetState(context.TODO(), signature.UUID)
 	assert.Nil(t, taskState)
 	assert.Error(t, err)
 }

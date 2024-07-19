@@ -76,7 +76,7 @@ func startServer() (*machinery.Server, error) {
 		},
 	}
 
-	server, err := machinery.NewServer(cnf)
+	server, err := machinery.NewServer(context.TODO(), cnf)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func worker() error {
 	worker.SetErrorHandler(errorhandler)
 	worker.SetPreTaskHandler(pretaskhandler)
 
-	return worker.Launch()
+	return worker.Launch(context.TODO())
 }
 
 func send() error {

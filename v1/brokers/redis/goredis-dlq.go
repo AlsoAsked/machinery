@@ -78,7 +78,7 @@ func NewGR_DLQ(cnf *config.Config, addrs []string, password string, db int) ifac
 }
 
 // StartConsuming enters a loop and waits for incoming messages
-func (b *BrokerGR_DLQ) StartConsuming(consumerTag string, concurrency int, taskProcessor iface.TaskProcessor) (bool, error) {
+func (b *BrokerGR_DLQ) StartConsuming(ctx context.Context, consumerTag string, concurrency int, taskProcessor iface.TaskProcessor) (bool, error) {
 	b.consumingWG.Add(1)
 	defer b.consumingWG.Done()
 
@@ -168,7 +168,7 @@ func (b *BrokerGR_DLQ) StartConsuming(consumerTag string, concurrency int, taskP
 		}
 	}()
 
-	if err := b.consume(deliveries, concurrency, taskProcessor, pool); err != nil {
+	if err := b.consume(ctx, deliveries, concurrency, taskProcessor, pool); err != nil {
 		return b.GetRetry(), err
 	}
 
@@ -216,7 +216,7 @@ func (b *BrokerGR_DLQ) Publish(ctx context.Context, signature *tasks.Signature) 
 }
 
 // GetPendingTasks returns a slice of task signatures waiting in the queue
-func (b *BrokerGR_DLQ) GetPendingTasks(queue string) ([]*tasks.Signature, error) {
+func (b *BrokerGR_DLQ) GetPendingTasks(ctx context.Context, queue string) ([]*tasks.Signature, error) {
 
 	if queue == "" {
 		queue = b.GetConfig().DefaultQueue
@@ -261,7 +261,7 @@ func (b *BrokerGR_DLQ) GetDelayedTasks() ([]*tasks.Signature, error) {
 
 // consume takes delivered messages from the channel and manages a worker pool
 // to process tasks concurrently
-func (b *BrokerGR_DLQ) consume(deliveries <-chan []byte, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}) error {
+func (b *BrokerGR_DLQ) consume(ctx context.Context, deliveries <-chan []byte, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}) error {
 	errorsChan := make(chan error)
 
 	for {
@@ -278,7 +278,7 @@ func (b *BrokerGR_DLQ) consume(deliveries <-chan []byte, concurrency int, taskPr
 			// Consume the task inside a goroutine so multiple tasks
 			// can be processed concurrently
 			go func() {
-				if err := b.consumeOne(d, taskProcessor); err != nil {
+				if err := b.consumeOne(ctx, d, taskProcessor); err != nil {
 					errorsChan <- err
 				}
 
@@ -294,7 +294,7 @@ func (b *BrokerGR_DLQ) consume(deliveries <-chan []byte, concurrency int, taskPr
 }
 
 // consumeOne processes a single message using TaskProcessor
-func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProcessor) error {
+func (b *BrokerGR_DLQ) consumeOne(ctx context.Context, delivery []byte, taskProcessor iface.TaskProcessor) error {
 	signature := new(tasks.Signature)
 	decoder := json.NewDecoder(bytes.NewReader(delivery))
 	decoder.UseNumber()
@@ -334,7 +334,7 @@ func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProce
 	log.DEBUG.Printf("Received new message: %+v", signature)
 	log.INFO.Printf("Processing task. Old UUID: %s New UUID: %s", oldUuid, signature.UUID)
 
-	if err := taskProcessor.Process(signature); err != nil {
+	if err := taskProcessor.Process(ctx, signature); err != nil {
 		// stop task deletion in case we want to send messages to dlq in redis
 		if err == errs.ErrStopTaskDeletion {
 			return nil
