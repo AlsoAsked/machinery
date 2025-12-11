@@ -2,12 +2,13 @@ package integration_test
 
 import (
 	"context"
-	"errors"
 	"log"
 	"reflect"
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/stretchr/testify/assert"
 

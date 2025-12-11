@@ -2,10 +2,11 @@ package sqs_test
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/RichardKnop/machinery/v1/brokers/iface"
 

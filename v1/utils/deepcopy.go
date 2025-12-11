@@ -1,8 +1,9 @@
 package utils
 
 import (
-	"errors"
 	"reflect"
+
+	"github.com/pkg/errors"
 )
 
 var (

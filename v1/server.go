@@ -2,10 +2,11 @@ package machinery
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"

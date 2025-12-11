@@ -2,10 +2,11 @@ package tasks
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"runtime/debug"
+
+	"github.com/pkg/errors"
 
 	opentracing "github.com/opentracing/opentracing-go"
 	opentracing_ext "github.com/opentracing/opentracing-go/ext"
@@ -96,9 +97,9 @@ func New(taskFunc interface{}, args []Arg) (*Task, error) {
 // Call attempts to call the task with the supplied arguments.
 //
 // `err` is set in the return value in two cases:
-// 1. The reflected function invocation panics (e.g. due to a mismatched
-//    argument list).
-// 2. The task func itself returns a non-nil error.
+//  1. The reflected function invocation panics (e.g. due to a mismatched
+//     argument list).
+//  2. The task func itself returns a non-nil error.
 func (t *Task) Call() (taskResults []*TaskResult, err error) {
 	// retrieve the span from the task's context and finish it as soon as this function returns
 	if span := opentracing.SpanFromContext(t.Context); span != nil {

@@ -2,7 +2,6 @@ package machinery
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -10,6 +9,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/opentracing/opentracing-go"
 

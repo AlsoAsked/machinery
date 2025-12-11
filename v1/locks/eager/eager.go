@@ -1,9 +1,10 @@
 package eager
 
 import (
-	"errors"
 	"sync"
 	"time"
+
+	"github.com/pkg/errors"
 )
 
 var (

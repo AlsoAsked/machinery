@@ -1,9 +1,10 @@
 package exampletasks
 
 import (
-	"errors"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/RichardKnop/machinery/v1/log"
 )

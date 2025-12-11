@@ -2,11 +2,12 @@ package integration_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/RichardKnop/machinery/v1"
 	"github.com/RichardKnop/machinery/v1/config"

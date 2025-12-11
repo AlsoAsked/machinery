@@ -3,9 +3,10 @@ package sqs
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"sync"
+
+	"github.com/pkg/errors"
 
 	"github.com/RichardKnop/machinery/v1/brokers/iface"
 	"github.com/RichardKnop/machinery/v1/common"

@@ -2,12 +2,13 @@ package machinery_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"reflect"
 	"testing"
 	"unsafe"
+
+	"github.com/pkg/errors"
 
 	machinery "github.com/RichardKnop/machinery/v1"
 	"github.com/RichardKnop/machinery/v1/config"

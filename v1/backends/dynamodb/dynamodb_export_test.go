@@ -2,8 +2,9 @@ package dynamodb
 
 import (
 	"context"
-	"errors"
 	"os"
+
+	"github.com/pkg/errors"
 
 	"github.com/RichardKnop/machinery/v1/backends/iface"
 	"github.com/RichardKnop/machinery/v1/config"

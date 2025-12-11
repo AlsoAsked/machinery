@@ -2,10 +2,11 @@ package tasks_test
 
 import (
 	"context"
-	"errors"
 	"math"
 	"testing"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/RichardKnop/machinery/v1/tasks"
 	"github.com/stretchr/testify/assert"

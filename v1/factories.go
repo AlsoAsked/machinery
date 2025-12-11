@@ -2,11 +2,12 @@ package machinery
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/pkg/errors"
 
 	neturl "net/url"
 

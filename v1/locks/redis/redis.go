@@ -1,10 +1,11 @@
 package redis
 
 import (
-	"errors"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/RichardKnop/machinery/v1/config"
 	"github.com/go-redis/redis/v8"

@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+
+	"github.com/pkg/errors"
 
 	"github.com/RichardKnop/machinery/v1/brokers/iface"
 	"github.com/RichardKnop/machinery/v1/common"

@@ -1,8 +1,9 @@
 package errs
 
 import (
-	"errors"
 	"fmt"
+
+	"github.com/pkg/errors"
 )
 
 // ErrCouldNotUnmarshalTaskSignature ...
