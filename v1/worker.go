@@ -150,6 +150,13 @@ func (worker *Worker) Process(ctx context.Context, signature *tasks.Signature) e
 		return nil
 	}
 
+	// A message for a task that already finished is a redelivery: acknowledge it
+	// without running the task, overwriting its state or sending its callbacks again.
+	if state, err := worker.server.GetBackend().GetState(ctx, signature.UUID); err == nil && state != nil && state.IsCompleted() {
+		log.WARNING.Printf("Skipped task %s: it already finished with state %s", signature.UUID, state.State)
+		return nil
+	}
+
 	// Update task state to RECEIVED
 	if err = worker.server.GetBackend().SetStateReceived(ctx, signature); err != nil {
 		return fmt.Errorf("Set state to 'received' for task %s returned error: %s", signature.UUID, err)
